@@ -83,3 +83,19 @@ def test_response_keys_are_sorted_at_every_level(env):
     assert op["result"]["preview"]["items"]
     assert_keys_sorted(op)
     assert_keys_sorted(env.client.get(f"/modifications/{op['id']}").json())
+
+
+def test_config_shows_user_values_and_defaults_with_secrets_redacted(env):
+    from beets import config
+
+    config["import"]["copy"].set(True)
+    config["some_secret"] = "hunter2"
+    config["some_secret"].redact = True
+    body = env.client.get("/config")
+    assert body.status_code == 200
+    assert "hunter2" not in body.text
+    config_json = body.json()
+    assert config_json["some_secret"] == "REDACTED"
+    assert config_json["directory"] == "Music"  # from the user's config.yaml
+    assert config_json["import"]["copy"] is True
+    assert "sort_item" in config_json  # from beets' defaults

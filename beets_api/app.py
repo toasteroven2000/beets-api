@@ -9,6 +9,7 @@ import os
 from itertools import islice
 from typing import Annotated
 
+from beets import config
 from beets.dbcore.query import ParsingError
 from fastapi import FastAPI, HTTPException, Query, Request, responses
 from pydantic import BaseModel, Field
@@ -112,6 +113,10 @@ def create_app() -> FastAPI:
         if (album := lib.get_album(id_)) is None:
             raise HTTPException(404, "album not found")
         return to_json(album)
+
+    @app.get("/config")
+    def get_config():
+        return config.flatten(redact=True)
 
     @app.post("/modifications", status_code=201)
     def create_modification(body: ModificationRequest):
