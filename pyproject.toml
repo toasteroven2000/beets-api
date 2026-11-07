@@ -1,0 +1,14 @@
+[project]
+name = "beets-api"
+version = "0.1.0"
+description = "A minimal HTTP API on top of beets"
+requires-python = ">=3.12"
+# Dependencies, including beets, are provided by devenv.nix.
+dependencies = []
+
+[tool.setuptools]
+packages = ["beets_api"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

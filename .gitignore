@@ -1,0 +1,26 @@
+.claude
+.scratch
+
+# Devenv
+.devenv*
+devenv.local.nix
+devenv.local.yaml
+
+# direnv
+.direnv
+
+# pre-commit
+.pre-commit-config.yaml
+
+# Rust/Cargo
+/target
+Cargo.lock
+
+# App data (SQLite files)
+/db
+
+.env
+
+# Python
+__pycache__/
+.pytest_cache/
