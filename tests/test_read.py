@@ -64,3 +64,22 @@ def test_paths_are_absolute_in_a_thread_without_inherited_context(env):
     thread.start()
     thread.join()
     assert os.path.isabs(result["path"])
+
+
+def assert_keys_sorted(value):
+    if isinstance(value, dict):
+        assert list(value) == sorted(value)
+        value = list(value.values())
+    if isinstance(value, list):
+        for child in value:
+            assert_keys_sorted(child)
+
+
+def test_response_keys_are_sorted_at_every_level(env):
+    album = env.seed_album(zebra="1", apple="2")
+    for url in ("/list", "/list?album=true", "/items/1", f"/albums/{album.id}"):
+        assert_keys_sorted(env.client.get(url).json())
+    op = env.preview(query="", set={"title": "New", "genres": "Rock"})
+    assert op["result"]["preview"]["items"]
+    assert_keys_sorted(op)
+    assert_keys_sorted(env.client.get(f"/modifications/{op['id']}").json())

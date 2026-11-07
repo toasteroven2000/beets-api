@@ -3,14 +3,14 @@
 python -m uvicorn --factory beets_api.app:create_app --host 127.0.0.1 --port 8338
 """
 
+import json
 import logging
 import os
 from itertools import islice
 from typing import Annotated
 
 from beets.dbcore.query import ParsingError
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Query, Request, responses
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -20,6 +20,15 @@ from .modify import Modifications
 from .store import Store
 
 log = logging.getLogger(__name__)
+
+
+class JSONResponse(responses.JSONResponse):
+    """Beets builds field names from a set, so their order differs between processes."""
+
+    def render(self, content) -> bytes:
+        return json.dumps(
+            content, sort_keys=True, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+        ).encode()
 
 
 class ModificationRequest(BaseModel):
@@ -65,7 +74,7 @@ def create_app() -> FastAPI:
     modifications = Modifications(lib, store)
     imports = Imports(lib, store)
 
-    app = FastAPI(title="beets-api")
+    app = FastAPI(title="beets-api", default_response_class=JSONResponse)
     app.state.lib = lib
     # No auth: this stops websites reaching the API through DNS rebinding.
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
