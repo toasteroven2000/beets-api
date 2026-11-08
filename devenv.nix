@@ -24,12 +24,12 @@
   # Keeps development away from the default library in ~/.config/beets.
   env.BEETSDIR = "${config.devenv.root}/db/foobar";
 
-  # Extra arguments go to uvicorn, e.g. `api --reload` or `api --port 9000`.
-  scripts.api.exec = ''
+  # Extra arguments go to uvicorn, e.g. `serve --reload` or `serve --port 9000`.
+  scripts.serve.exec = ''
     exec python -m uvicorn --factory beets_api.app:create_app \
       --app-dir "$DEVENV_ROOT" --host 127.0.0.1 --port 8338 "$@"
   '';
-  processes.api.exec = "api";
+  processes.self.exec = "serve";
 
   cachix.enable = false;
 }
