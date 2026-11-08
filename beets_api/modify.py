@@ -166,7 +166,7 @@ class Modifications:
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="modify")
 
     def create(self, request: dict) -> dict:
-        album, query = request["album"], request["query"]
+        album, query = request["scope"] == "album", request["query"]
         mods, dels = _parse_changes(album, request["set"], request["delete"])
         write, move = ui.should_write(), ui.should_move()
         preview = _build_preview(self.lib, album, query, mods, dels, move)

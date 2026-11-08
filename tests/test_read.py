@@ -4,22 +4,28 @@ import threading
 def test_list_items_uses_beets_query_syntax(env):
     env.seed_album("First", titles=("One", "Two"))
     env.seed_album("Second", titles=("Three",))
-    body = env.client.get("/list", params={"query": "album:Second"}).json()
+    body = env.client.get("/list", params={"scope": "item", "query": "album:Second"}).json()
     assert body["total"] == 1
     assert body["results"][0]["title"] == "Three"
     assert os.path.isabs(body["results"][0]["path"])
 
 
-def test_list_albums_with_flag(env):
+def test_list_albums_with_scope(env):
     env.seed_album("First")
-    body = env.client.get("/list", params={"album": True}).json()
+    body = env.client.get("/list", params={"scope": "album"}).json()
     assert [a["album"] for a in body["results"]] == ["First"]
+
+
+def test_list_requires_a_valid_scope(env):
+    env.seed_album()
+    assert env.client.get("/list").status_code == 422
+    assert env.client.get("/list", params={"scope": "track"}).status_code == 422
 
 
 def test_list_pages_and_narrows_fields(env):
     env.seed_album(titles=("One", "Two", "Three"))
     body = env.client.get(
-        "/list", params={"limit": 1, "offset": 1, "fields": "title,track"}
+        "/list", params={"scope": "item", "limit": 1, "offset": 1, "fields": "title,track"}
     ).json()
     assert body["total"] == 3
     assert len(body["results"]) == 1
@@ -27,7 +33,7 @@ def test_list_pages_and_narrows_fields(env):
 
 
 def test_list_rejects_invalid_query(env):
-    assert env.client.get("/list", params={"query": 'album:"unclosed'}).status_code == 400
+    assert env.client.get("/list", params={"scope": "item", "query": 'album:"unclosed'}).status_code == 400
 
 
 def test_get_item_and_album(env):
@@ -40,7 +46,7 @@ def test_get_item_and_album(env):
 
 
 def test_rejects_other_hosts(env):
-    assert env.client.get("/list", headers={"Host": "evil.example"}).status_code == 400
+    assert env.client.get("/list?scope=item", headers={"Host": "evil.example"}).status_code == 400
 
 
 def test_rejects_non_json_bodies(env):
@@ -77,9 +83,9 @@ def assert_keys_sorted(value):
 
 def test_response_keys_are_sorted_at_every_level(env):
     album = env.seed_album(zebra="1", apple="2")
-    for url in ("/list", "/list?album=true", "/items/1", f"/albums/{album.id}"):
+    for url in ("/list?scope=item", "/list?scope=album", "/items/1", f"/albums/{album.id}"):
         assert_keys_sorted(env.client.get(url).json())
-    op = env.preview(query="", set={"title": "New", "genres": "Rock"})
+    op = env.preview(scope="item", query="", set={"title": "New", "genres": "Rock"})
     assert op["result"]["preview"]["items"]
     assert_keys_sorted(op)
     assert_keys_sorted(env.client.get(f"/modifications/{op['id']}").json())

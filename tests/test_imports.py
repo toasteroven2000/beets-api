@@ -182,7 +182,7 @@ def test_modifications_work_while_import_waits_for_choice(env, source):
     env.seed_album("Existing", titles=("Old",))
     id_ = start(env, source)
     prompt(env, id_)
-    op = env.preview(query="", set={"comments": "x"})
+    op = env.preview(scope="item", query="", set={"comments": "x"})
     assert env.confirm(op["id"])["status"] == "applied"
     env.client.delete(f"/imports/{id_}")
     finish(env, id_)

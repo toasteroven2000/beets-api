@@ -7,7 +7,7 @@ import json
 import logging
 import os
 from itertools import islice
-from typing import Annotated
+from typing import Annotated, Literal
 
 from beets import config
 from beets.dbcore.query import ParsingError
@@ -33,8 +33,8 @@ class JSONResponse(responses.JSONResponse):
 
 
 class ModificationRequest(BaseModel):
+    scope: Literal["item", "album"]
     query: str
-    album: bool = False
     set: dict[str, str] = Field(default_factory=dict)
     delete: list[str] = Field(default_factory=list)
 
@@ -87,13 +87,13 @@ def create_app() -> FastAPI:
 
     @app.get("/list")
     def list_(
+        scope: Literal["item", "album"],
         query: str = "",
-        album: bool = False,
         limit: Annotated[int, Query(ge=1)] = 100,
         offset: Annotated[int, Query(ge=0)] = 0,
         fields: str | None = None,
     ):
-        results = lib.albums(query) if album else lib.items(query)
+        results = lib.albums(query) if scope == "album" else lib.items(query)
         names = fields.split(",") if fields else None
         return {
             "total": len(results),

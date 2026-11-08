@@ -28,6 +28,10 @@ _Avoid_: Edit, batch edit
 One requested Modify, from its Preview through to its outcome.
 _Avoid_: Edit, job
 
+**Scope**:
+Whether a query (in a Modify or a listing) matches Items or Albums, like `beet modify` with or without `-a`. Album-scoped changes to shared fields are copied down to the Album's Items.
+_Avoid_: Album flag, mode
+
 **Preview**:
 The exact changes a Modification would make, shown before anything changes.
 _Avoid_: Diff, pretend, dry run
