@@ -211,3 +211,57 @@ def test_history_path_comes_from_env_var(env, monkeypatch, tmp_path):
     restart(env)
     env.preview(scope="item", query="", set={"comments": "x"})
     assert path.exists()
+
+
+def list_modifications(env, **params):
+    response = env.client.get("/modifications", params=params)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_list_modifications_newest_first_with_paging(env):
+    env.seed_album()
+    ids = [env.preview(scope="item", query="", set={"comments": str(n)})["id"] for n in range(3)]
+
+    body = list_modifications(env)
+    assert body["total"] == 3
+    assert [m["id"] for m in body["results"]] == ids[::-1]
+
+    page = list_modifications(env, limit=1, offset=1)
+    assert (page["total"], page["limit"], page["offset"]) == (3, 1, 1)
+    assert [m["id"] for m in page["results"]] == [ids[1]]
+
+
+def test_list_modifications_summarises_without_the_preview(env):
+    env.seed_album()
+    op = env.preview(scope="album", query="", set={"albumdisambig": "x"})
+    env.confirm(op["id"])
+
+    [summary] = list_modifications(env)["results"]
+    assert set(summary) == {"id", "status", "request", "created_at", "updated_at", "counts"}
+    assert summary["status"] == "applied"
+    assert summary["request"]["set"] == {"albumdisambig": "x"}
+    assert summary["counts"] == {"albums": 1, "items": 2, "applied": 3, "failed": 0}
+
+
+def test_list_modifications_filters_by_status(env):
+    env.seed_album()
+    waiting = env.preview(scope="item", query="", set={"comments": "a"})["id"]
+    nothing = env.preview(scope="item", query="nomatch", set={"comments": "a"})["id"]
+    applied = env.preview(scope="item", query="", set={"comments": "b"})["id"]
+    env.confirm(applied)
+
+    def ids(*statuses):
+        return [m["id"] for m in list_modifications(env, status=list(statuses))["results"]]
+
+    assert ids("awaiting_confirmation") == [waiting]
+    assert ids("no_changes", "applied") == [applied, nothing]
+    assert list_modifications(env, status="no_such_status")["total"] == 0
+
+
+def test_list_modifications_excludes_imports(env):
+    (env.tmp_path / "empty").mkdir()
+    response = env.client.post("/imports", json={"paths": [str(env.tmp_path / "empty")]})
+    assert response.status_code == 202, response.text
+    env.wait(f"/imports/{response.json()['id']}", "completed", "failed")
+    assert list_modifications(env) == {"total": 0, "limit": 50, "offset": 0, "results": []}

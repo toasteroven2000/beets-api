@@ -78,7 +78,7 @@ def _describe_track_match(index: int, match) -> dict:
 
 
 class ApiImportSession(ImportSession):
-    def __init__(self, lib, paths: list[str], op_id: str, store: Store):
+    def __init__(self, lib, paths: list[str], op_id: int, store: Store):
         super().__init__(lib, None, [os.fsencode(p) for p in paths], None)
         self.op_id = op_id
         self.store = store
@@ -260,13 +260,13 @@ class Imports:
             with self.lock:
                 self.active = None
 
-    def get(self, id_: str) -> dict:
+    def get(self, id_: int) -> dict:
         op = self.store.get(id_, KIND)
         if op is None:
             raise HTTPException(404, "import not found")
         return op
 
-    def _active_session(self, id_: str) -> ApiImportSession:
+    def _active_session(self, id_: int) -> ApiImportSession:
         self.get(id_)
         with self.lock:
             active = self.active
@@ -274,10 +274,10 @@ class Imports:
             raise HTTPException(409, "this import is not active")
         return active
 
-    def choose(self, id_: str, request: dict) -> dict:
+    def choose(self, id_: int, request: dict) -> dict:
         self._active_session(id_).answer(request)
         return self.get(id_)
 
-    def abort(self, id_: str) -> dict:
+    def abort(self, id_: int) -> dict:
         self._active_session(id_).abort()
         return self.get(id_)

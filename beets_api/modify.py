@@ -158,6 +158,19 @@ def _apply_album(lib, entry: dict) -> None:
     album.store(inherit=False)
 
 
+def _summary(op: dict) -> dict:
+    """A Modification without its Preview, which can be large."""
+    result = op["result"]
+    counts = {
+        "albums": len(result["preview"]["albums"]),
+        "items": len(result["preview"]["items"]),
+        "applied": len(result.get("applied", [])),
+        "failed": len(result.get("failed", [])),
+    }
+    keys = ("id", "status", "request", "created_at", "updated_at")
+    return {k: op[k] for k in keys} | {"counts": counts}
+
+
 class Modifications:
     def __init__(self, lib, store: Store):
         self.lib = lib
@@ -174,11 +187,20 @@ class Modifications:
         result = {"write": write, "move": move, "preview": preview}
         return self.get(self.store.create(KIND, status, request, result))
 
-    def get(self, id_: str) -> dict:
+    def get(self, id_: int) -> dict:
         op = self.store.get(id_, KIND)
         if op is None:
             raise HTTPException(404, "modification not found")
         return op
+
+    def list(self, statuses: list[str], limit: int, offset: int) -> dict:
+        total, ops = self.store.list(KIND, statuses, limit, offset)
+        return {
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "results": [_summary(op) for op in ops],
+        }
 
     def _stale(self, preview: dict) -> list[dict]:
         stale = []
@@ -192,7 +214,7 @@ class Modifications:
     def _reject(self, op: dict, stale: list[dict]) -> None:
         self.store.update(op["id"], "rejected", op["result"] | {"stale": stale})
 
-    def confirm(self, id_: str) -> dict:
+    def confirm(self, id_: int) -> dict:
         op = self.get(id_)
         if op["status"] != "awaiting_confirmation":
             raise HTTPException(409, f"cannot confirm while {op['status']}")
@@ -204,7 +226,7 @@ class Modifications:
         self.executor.submit(self._apply, id_)
         return self.get(id_)
 
-    def _apply_one(self, id_: str, result: dict, kind: str, entry: dict, apply_entry) -> None:
+    def _apply_one(self, id_: int, result: dict, kind: str, entry: dict, apply_entry) -> None:
         ref = {"kind": kind, "id": entry["id"]}
         result["current"] = ref
         self.store.update(id_, "applying", result)
@@ -215,11 +237,11 @@ class Modifications:
             log.exception("failed to apply %s", ref)
             result["failed"].append(ref | {"error": str(exc)})
 
-    def _apply(self, id_: str) -> None:
+    def _apply(self, id_: int) -> None:
         with self.lib.music_dir_context():
             self._apply_all(id_)
 
-    def _apply_all(self, id_: str) -> None:
+    def _apply_all(self, id_: int) -> None:
         op = self.get(id_)
         result = op["result"] | {"applied": [], "failed": [], "current": None}
         try:

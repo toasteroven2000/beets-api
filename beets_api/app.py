@@ -132,12 +132,20 @@ def create_app() -> FastAPI:
     def create_modification(body: ModificationRequest):
         return modifications.create(body.model_dump())
 
+    @app.get("/modifications")
+    def list_modifications(
+        status: Annotated[list[str], Query()] = [],
+        limit: Annotated[int, Query(ge=1)] = 50,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ):
+        return modifications.list(status, limit, offset)
+
     @app.get("/modifications/{id_}")
-    def get_modification(id_: str):
+    def get_modification(id_: int):
         return modifications.get(id_)
 
     @app.post("/modifications/{id_}/confirm", status_code=202)
-    def confirm_modification(id_: str):
+    def confirm_modification(id_: int):
         return modifications.confirm(id_)
 
     @app.post("/imports", status_code=202)
@@ -145,15 +153,15 @@ def create_app() -> FastAPI:
         return imports.start(body.model_dump())
 
     @app.get("/imports/{id_}")
-    def get_import(id_: str):
+    def get_import(id_: int):
         return imports.get(id_)
 
     @app.post("/imports/{id_}/choice", status_code=202)
-    def choose(id_: str, body: ChoiceRequest):
+    def choose(id_: int, body: ChoiceRequest):
         return imports.choose(id_, body.model_dump())
 
     @app.delete("/imports/{id_}", status_code=202)
-    def abort_import(id_: str):
+    def abort_import(id_: int):
         return imports.abort(id_)
 
     return app
