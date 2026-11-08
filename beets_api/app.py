@@ -114,6 +114,16 @@ def create_app() -> FastAPI:
             raise HTTPException(404, "album not found")
         return to_json(album)
 
+    @app.get("/albums/{id_}/art", response_class=responses.FileResponse)
+    def get_album_art(id_: int):
+        if (album := lib.get_album(id_)) is None:
+            raise HTTPException(404, "album not found")
+        if (path := album.art_filepath) is None:
+            raise HTTPException(404, "album has no art")
+        if not path.is_file():
+            raise HTTPException(404, "album art file is missing")
+        return responses.FileResponse(path)
+
     @app.get("/config")
     def get_config():
         return config.flatten(redact=True)

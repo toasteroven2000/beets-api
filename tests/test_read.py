@@ -99,3 +99,29 @@ def test_config_shows_user_values_and_defaults_with_secrets_redacted(env):
     assert config_json["directory"] == "Music"  # from the user's config.yaml
     assert config_json["import"]["copy"] is True
     assert "sort_item" in config_json  # from beets' defaults
+
+
+def test_album_art_serves_the_image_file(env):
+    album = env.seed_album()
+    image = env.tmp_path / "cover.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    album.set_art(str(image))
+    album.store()
+    response = env.client.get(f"/albums/{album.id}/art")
+    assert response.status_code == 200
+    assert response.content == b"\x89PNG\r\n\x1a\nfake"
+    assert response.headers["content-type"] == "image/png"
+
+
+def test_album_art_is_404_without_album_art_or_file(env):
+    album = env.seed_album()
+    assert env.client.get("/albums/999/art").status_code == 404
+    assert env.client.get(f"/albums/{album.id}/art").json()["detail"] == "album has no art"
+    image = env.tmp_path / "cover.jpg"
+    image.write_bytes(b"jpeg")
+    album.set_art(str(image))
+    album.store()
+    os.remove(album.artpath)
+    response = env.client.get(f"/albums/{album.id}/art")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "album art file is missing"
