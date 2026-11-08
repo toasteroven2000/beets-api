@@ -29,7 +29,7 @@
     exec python -m uvicorn --factory beets_api.app:create_app \
       --app-dir "$DEVENV_ROOT" --host 127.0.0.1 --port 8338 "$@"
   '';
-  processes.self.exec = "serve";
+  processes.web.exec = "serve";
 
   cachix.enable = false;
 }
