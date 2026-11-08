@@ -13,14 +13,24 @@ from beets import config
 from beets.dbcore.query import ParsingError
 from fastapi import FastAPI, HTTPException, Query, Request, responses
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .imports import Imports
-from .library import default_store_path, open_library, to_json
+from .library import (
+    default_store_path,
+    image_extension,
+    json_value,
+    open_library,
+    set_album_art,
+    to_json,
+)
 from .modify import Modifications
 from .store import Store
 
 log = logging.getLogger(__name__)
+
+MAX_ART_BYTES = 20 * 1024 * 1024
 
 
 class JSONResponse(responses.JSONResponse):
@@ -77,6 +87,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="beets-api", default_response_class=JSONResponse)
     app.state.lib = lib
+    app.state.store = store
     # No auth: this stops websites reaching the API through DNS rebinding.
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
     app.add_middleware(MusicDirMiddleware, lib=lib)
@@ -123,6 +134,25 @@ def create_app() -> FastAPI:
         if not path.is_file():
             raise HTTPException(404, "album art file is missing")
         return responses.FileResponse(path)
+
+    @app.put("/albums/{id_}/art")
+    async def put_album_art(id_: int, request: Request):
+        """The body is the image itself (JPEG or PNG), not a multipart form."""
+        data = await request.body()
+        if len(data) > MAX_ART_BYTES:
+            raise HTTPException(413, f"album art is larger than {MAX_ART_BYTES} bytes")
+        if (extension := image_extension(data)) is None:
+            raise HTTPException(415, "album art must be a JPEG or PNG image")
+
+        def upload():
+            if (album := lib.get_album(id_)) is None:
+                raise HTTPException(404, "album not found")
+            old = set_album_art(album, data, extension)
+            request = {"album_id": id_, "format": extension[1:], "bytes": len(data)}
+            result = {"old_artpath": old, "artpath": json_value(album.artpath)}
+            return store.get(store.create("art_upload", "applied", request, result), "art_upload")
+
+        return await run_in_threadpool(upload)
 
     @app.get("/config")
     def get_config():
