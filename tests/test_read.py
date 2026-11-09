@@ -178,7 +178,7 @@ def test_upload_album_art_rejects_bad_requests(env):
     assert response.status_code == 415
     assert env.client.put(f"/albums/{album.id}/art", content=b"").status_code == 415
     assert env.lib.get_album(album.id).artpath is None
-    assert env.client.app.state.store.list("art_upload", [], 10, 0)[0] == 0
+    assert env.client.app.state.store.page("art_upload", [], 10, 0)[0] == 0
 
 
 def test_upload_album_art_rejects_large_images(env, monkeypatch):
@@ -199,7 +199,7 @@ def test_upload_album_art_is_recorded_in_history(env):
     assert second["result"]["old_artpath"] == first["result"]["artpath"]
     assert second["result"]["artpath"].endswith("/cover.png")
 
-    total, ops = env.client.app.state.store.list("art_upload", [], 10, 0)
+    total, ops = env.client.app.state.store.page("art_upload", [], 10, 0)
     assert total == 2 and ops[0] == second
     assert env.client.get("/modifications").json()["total"] == 0
 

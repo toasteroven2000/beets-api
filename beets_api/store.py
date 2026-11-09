@@ -52,7 +52,7 @@ class Store:
             ).fetchone()
         return None if row is None else _decode(row)
 
-    def list(
+    def page(
         self, kind: str, statuses: list[str], limit: int, offset: int
     ) -> tuple[int, list[dict]]:
         """Newest first."""

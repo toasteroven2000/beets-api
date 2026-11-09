@@ -168,7 +168,7 @@ def create_app() -> FastAPI:
         limit: Annotated[int, Query(ge=1)] = 50,
         offset: Annotated[int, Query(ge=0)] = 0,
     ):
-        return modifications.list(status, limit, offset)
+        return modifications.page(status, limit, offset)
 
     @app.get("/modifications/{id_}")
     def get_modification(id_: int):

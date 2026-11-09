@@ -193,8 +193,8 @@ class Modifications:
             raise HTTPException(404, "modification not found")
         return op
 
-    def list(self, statuses: list[str], limit: int, offset: int) -> dict:
-        total, ops = self.store.list(KIND, statuses, limit, offset)
+    def page(self, statuses: list[str], limit: int, offset: int) -> dict:
+        total, ops = self.store.page(KIND, statuses, limit, offset)
         return {
             "total": total,
             "limit": limit,
