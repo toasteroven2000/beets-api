@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .imports import Imports
+from .imports import Imports, import_roots
 from .art import AlbumArt
 from .library import default_store_path, open_library, to_json
 from .modify import Modifications
@@ -75,7 +75,12 @@ def create_app() -> FastAPI:
     store = Store(store_path)
     store.mark_interrupted(("queued", "applying", "running", "waiting_for_choice"))
     modifications = Modifications(lib, store)
-    imports = Imports(lib, store)
+    roots = import_roots(os.environ.get("BEETS_API_IMPORT_PATHS"))
+    if roots is None:
+        log.warning("BEETS_API_IMPORT_PATHS is unset: imports may read any path")
+    else:
+        log.info("imports allowed from: %s", roots)
+    imports = Imports(lib, store, roots)
     art = AlbumArt(lib, store)
 
     app = FastAPI(title="beets-api", default_response_class=JSONResponse)

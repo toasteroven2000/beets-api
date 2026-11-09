@@ -19,13 +19,21 @@ devenv up            # or run it as the `web` process
 python -m pytest     # tests
 ```
 
-In the dev shell, `BEETSDIR` points at `db/foobar`, a throwaway library, so your real one in `~/.config/beets` is left alone. Outside devenv, the API uses whichever library `BEETSDIR` or beets' default config points to. The API keeps its own SQLite file, `beets-api.db`, in the beets config directory or at `BEETS_API_DB`. It holds the state of Modifications and Imports, and the **audit**: one append-only entry for every Album or Item the API changes, imports, removes, or sets art for. Database triggers refuse any edit or deletion of audit entries. Changes made with `beet` directly are not audited.
+In the dev shell, `BEETSDIR` points at `db/foobar`, a throwaway library, so your real one in `~/.config/beets` is left alone. Outside devenv, the API uses whichever library `BEETSDIR` or beets' default config points to. The API keeps its own SQLite file, `beets-api.db`. It holds the state of Modifications and Imports, and the **audit**: one append-only entry for every Album or Item the API changes, imports, removes, or sets art for. Database triggers refuse any edit or deletion of audit entries. Changes made with `beet` directly are not audited.
 
 Send an `X-Client` header to record which client made a change; without authentication this is a label, not proof.
 
 Album art is only served, written or archived inside the music `directory` from beets' config, and changes are never destructive: a replaced or removed image is copied into the `art_archive` table in `beets-api.db` before its file is deleted, and the audit entry gives the archive row's id. Like the audit, archived images can't be edited or deleted.
 
 Interactive API docs are served at `/docs`.
+
+## Environment variables
+
+| Variable | Default | What it does |
+|---|---|---|
+| `BEETSDIR` | beets' default (`~/.config/beets`) | The beets config directory, and so the library, music `directory` and plugins the API uses. Read by beets itself. The dev shell sets it to `db/foobar`; the Docker image sets it to `/config`. |
+| `BEETS_API_DB` | `beets-api.db` in the beets config directory | Path of the API's own SQLite file: Modification and Import state, the audit and the art archive. |
+| `BEETS_API_IMPORT_PATHS` | unset: any path | Directories `POST /imports` may read from, separated by `:` like `PATH`. A requested path must resolve, after following symlinks, to one of these directories or somewhere inside it; otherwise the request is refused with `403`. Set but empty, it refuses every Import. Unset, Imports may read any path the server can, and a warning is logged at startup. |
 
 ## Endpoints
 

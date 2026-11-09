@@ -241,3 +241,53 @@ def test_waiting_import_is_interrupted_after_restart_and_reimport_skips_finished
     choose(env, second, "asis")
     assert finish(env, second)["status"] == "completed"
     assert len(env.lib.items()) == 4
+
+
+def restart_with_import_paths(env, monkeypatch, value):
+    monkeypatch.setenv("BEETS_API_IMPORT_PATHS", value)
+    restart(env)
+
+
+def test_import_paths_allow_paths_inside_a_root(env, source, monkeypatch):
+    other = env.tmp_path / "elsewhere"
+    other.mkdir()
+    restart_with_import_paths(env, monkeypatch, os.pathsep.join([str(other), source]))
+    id_ = start(env, os.path.join(source, "a"))
+    assert prompt(env, id_)["kind"] == "album"
+    choose(env, id_, "abort")
+    finish(env, id_)
+
+
+def test_import_paths_refuse_paths_outside_every_root(env, source, monkeypatch):
+    allowed = env.tmp_path / "allowed"
+    allowed.mkdir()
+    restart_with_import_paths(env, monkeypatch, str(allowed))
+    response = env.client.post("/imports", json={"paths": [source]})
+    assert response.status_code == 403
+    assert source in response.json()["detail"]
+    assert env.client.get("/imports/1").status_code == 404
+
+
+def test_import_paths_refuse_a_symlink_that_leaves_the_root(env, source, monkeypatch):
+    allowed = env.tmp_path / "allowed"
+    allowed.mkdir()
+    (allowed / "link").symlink_to(source)
+    restart_with_import_paths(env, monkeypatch, str(allowed))
+    response = env.client.post("/imports", json={"paths": [str(allowed / "link")]})
+    assert response.status_code == 403
+
+
+def test_import_paths_refuse_a_sibling_sharing_the_root_prefix(env, monkeypatch):
+    allowed = env.tmp_path / "in"
+    allowed.mkdir()
+    sibling = env.tmp_path / "incoming"
+    make_album_files(str(sibling))
+    restart_with_import_paths(env, monkeypatch, str(allowed))
+    response = env.client.post("/imports", json={"paths": [str(sibling)]})
+    assert response.status_code == 403
+
+
+def test_empty_import_paths_refuse_every_import(env, source, monkeypatch):
+    restart_with_import_paths(env, monkeypatch, "")
+    response = env.client.post("/imports", json={"paths": [source]})
+    assert response.status_code == 403

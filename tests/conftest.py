@@ -84,6 +84,7 @@ def env(tmp_path, monkeypatch):
     )
     monkeypatch.setenv("BEETSDIR", str(home))
     monkeypatch.delenv("BEETS_API_DB", raising=False)
+    monkeypatch.delenv("BEETS_API_IMPORT_PATHS", raising=False)
     with TestClient(create_app(), base_url="http://localhost") as client:
         yield Env(tmp_path, client)
 
