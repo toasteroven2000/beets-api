@@ -1,0 +1,4 @@
+# Only the API package goes into the image.
+*
+!beets_api/
+beets_api/**/__pycache__
