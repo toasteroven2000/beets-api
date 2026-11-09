@@ -133,3 +133,9 @@ def test_album_art_is_404_without_album_art_or_file(env):
     assert response.status_code == 404
     assert response.json()["detail"] == "album art file is missing"
 
+
+
+def test_health_returns_empty_200(env):
+    response = env.client.get("/health")
+    assert response.status_code == 200
+    assert response.content == b""
