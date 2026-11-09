@@ -15,6 +15,7 @@ from beets.autotag import tag_album, tag_item
 from beets.importer import Action, DuplicateAction, ImportAbortError, ImportSession
 from fastapi import HTTPException
 
+from .import_paths import inside
 from .library import forget_cached_paths, json_value, to_json
 from .store import Store
 
@@ -33,22 +34,6 @@ DUPLICATE_ACTIONS = {
     "remove": DuplicateAction.REMOVE,
     "merge": DuplicateAction.MERGE,
 }
-
-
-def import_roots(value: str | None) -> list[str] | None:
-    """Parse BEETS_API_IMPORT_PATHS: directories joined by os.pathsep, like PATH.
-
-    None means the variable is unset and Imports may read from anywhere.
-    """
-    if value is None:
-        return None
-    return [os.path.realpath(p) for p in value.split(os.pathsep) if p]
-
-
-def _inside(path: str, roots: list[str]) -> bool:
-    """Compared after resolving symlinks, so a link can't point outside."""
-    real = os.path.realpath(path)
-    return any(os.path.commonpath([root, real]) == root for root in roots)
 
 
 def _paths(paths) -> list[str]:
@@ -299,7 +284,7 @@ class Imports:
         if missing := [p for p in paths if not os.path.exists(p)]:
             raise HTTPException(422, f"paths do not exist: {missing}")
         if self.roots is not None and (
-            outside := [p for p in paths if not _inside(p, self.roots)]
+            outside := [p for p in paths if not inside(p, self.roots)]
         ):
             raise HTTPException(403, f"paths are outside BEETS_API_IMPORT_PATHS: {outside}")
         with self.lock:

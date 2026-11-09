@@ -16,7 +16,8 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .imports import Imports, import_roots
+from .import_paths import browse, import_roots
+from .imports import Imports
 from .art import AlbumArt
 from .library import default_store_path, open_library, to_json
 from .modify import Modifications
@@ -180,6 +181,11 @@ def create_app() -> FastAPI:
     @app.post("/modifications/{id_}/confirm", status_code=202)
     def confirm_modification(id_: int, x_client: Annotated[str | None, Header()] = None):
         return modifications.confirm(id_, x_client)
+
+    @app.get("/import-paths")
+    def get_import_paths(path: str | None = None):
+        """Without a path, the Import Paths; with one, that directory's children."""
+        return browse(roots, path)
 
     @app.post("/imports", status_code=202)
     def create_import(body: ImportRequest, x_client: Annotated[str | None, Header()] = None):
