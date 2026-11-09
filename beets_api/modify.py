@@ -16,7 +16,8 @@ from .store import Store
 log = logging.getLogger(__name__)
 
 KIND = "modification"
-PROTECTED_FIELDS = {"id", "path"}
+# artpath changes only through the art endpoints, which never take a path.
+PROTECTED_FIELDS = {"id", "path", "artpath"}
 
 
 def _parse_changes(album: bool, set_: dict[str, str], delete: list[str]):
@@ -214,7 +215,7 @@ class Modifications:
     def _reject(self, op: dict, stale: list[dict]) -> None:
         self.store.update(op["id"], "rejected", op["result"] | {"stale": stale})
 
-    def confirm(self, id_: int) -> dict:
+    def confirm(self, id_: int, client: str | None = None) -> dict:
         op = self.get(id_)
         if op["status"] != "awaiting_confirmation":
             raise HTTPException(409, f"cannot confirm while {op['status']}")
@@ -223,25 +224,30 @@ class Modifications:
             raise HTTPException(409, {"detail": "library changed since Preview", "stale": stale})
         if not self.store.transition(id_, "awaiting_confirmation", "queued"):
             raise HTTPException(409, "already confirmed")
-        self.executor.submit(self._apply, id_)
+        self.executor.submit(self._apply, id_, client)
         return self.get(id_)
 
-    def _apply_one(self, id_: int, result: dict, kind: str, entry: dict, apply_entry) -> None:
+    def _apply_one(
+        self, id_: int, result: dict, kind: str, entry: dict, apply_entry, client: str | None
+    ) -> None:
         ref = {"kind": kind, "id": entry["id"]}
         result["current"] = ref
         self.store.update(id_, "applying", result)
         try:
             path = apply_entry(entry)
-            result["applied"].append(ref | ({"path": path} if path else {}))
         except Exception as exc:
             log.exception("failed to apply %s", ref)
             result["failed"].append(ref | {"error": str(exc)})
+            return
+        result["applied"].append(ref | ({"path": path} if path else {}))
+        model = kind.removesuffix("s")  # "albums" -> "album"
+        self.store.audit(f"{model}.modify", f"{model}:{entry['id']}", entry["changes"], client, id_)
 
-    def _apply(self, id_: int) -> None:
+    def _apply(self, id_: int, client: str | None) -> None:
         with self.lib.music_dir_context():
-            self._apply_all(id_)
+            self._apply_all(id_, client)
 
-    def _apply_all(self, id_: int) -> None:
+    def _apply_all(self, id_: int, client: str | None) -> None:
         op = self.get(id_)
         result = op["result"] | {"applied": [], "failed": [], "current": None}
         try:
@@ -252,11 +258,16 @@ class Modifications:
             self.store.update(id_, "applying", result)
             write, move = result["write"], result["move"]
             for entry in result["preview"]["albums"]:
-                self._apply_one(id_, result, "albums", entry, lambda e: _apply_album(self.lib, e))
+                self._apply_one(
+                    id_, result, "albums", entry, lambda e: _apply_album(self.lib, e), client
+                )
             # Items' new paths depend on the Albums stored above.
             forget_cached_paths(self.lib)
             for entry in result["preview"]["items"]:
-                self._apply_one(id_, result, "items", entry, lambda e: _apply_item(self.lib, e, write, move))
+                self._apply_one(
+                    id_, result, "items", entry,
+                    lambda e: _apply_item(self.lib, e, write, move), client,
+                )
             result["current"] = None
             self.store.update(id_, "partial" if result["failed"] else "applied", result)
         except Exception as exc:

@@ -11,26 +11,18 @@ from typing import Annotated, Literal
 
 from beets import config
 from beets.dbcore.query import ParsingError
-from fastapi import FastAPI, HTTPException, Query, Request, responses
+from fastapi import FastAPI, Header, HTTPException, Query, Request, responses
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .imports import Imports
-from .library import (
-    default_store_path,
-    image_extension,
-    json_value,
-    open_library,
-    set_album_art,
-    to_json,
-)
+from .art import AlbumArt
+from .library import default_store_path, open_library, to_json
 from .modify import Modifications
 from .store import Store
 
 log = logging.getLogger(__name__)
-
-MAX_ART_BYTES = 20 * 1024 * 1024
 
 
 class JSONResponse(responses.JSONResponse):
@@ -84,6 +76,7 @@ def create_app() -> FastAPI:
     store.mark_interrupted(("queued", "applying", "running", "waiting_for_choice"))
     modifications = Modifications(lib, store)
     imports = Imports(lib, store)
+    art = AlbumArt(lib, store)
 
     app = FastAPI(title="beets-api", default_response_class=JSONResponse)
     app.state.lib = lib
@@ -127,32 +120,33 @@ def create_app() -> FastAPI:
 
     @app.get("/albums/{id_}/art", response_class=responses.FileResponse)
     def get_album_art(id_: int):
-        if (album := lib.get_album(id_)) is None:
-            raise HTTPException(404, "album not found")
-        if (path := album.art_filepath) is None:
-            raise HTTPException(404, "album has no art")
-        if not path.is_file():
-            raise HTTPException(404, "album art file is missing")
-        return responses.FileResponse(path)
+        return responses.FileResponse(art.file(id_))
 
     @app.put("/albums/{id_}/art")
-    async def put_album_art(id_: int, request: Request):
+    async def put_album_art(
+        id_: int, request: Request, x_client: Annotated[str | None, Header()] = None
+    ):
         """The body is the image itself (JPEG or PNG), not a multipart form."""
         data = await request.body()
-        if len(data) > MAX_ART_BYTES:
-            raise HTTPException(413, f"album art is larger than {MAX_ART_BYTES} bytes")
-        if (extension := image_extension(data)) is None:
-            raise HTTPException(415, "album art must be a JPEG or PNG image")
+        return await run_in_threadpool(art.upload, id_, data, x_client)
 
-        def upload():
-            if (album := lib.get_album(id_)) is None:
-                raise HTTPException(404, "album not found")
-            old = set_album_art(album, data, extension)
-            request = {"album_id": id_, "format": extension[1:], "bytes": len(data)}
-            result = {"old_artpath": old, "artpath": json_value(album.artpath)}
-            return store.get(store.create("art_upload", "applied", request, result), "art_upload")
+    @app.delete("/albums/{id_}/art")
+    def delete_album_art(id_: int, x_client: Annotated[str | None, Header()] = None):
+        if (entry := art.remove(id_, x_client)) is None:
+            return responses.Response(status_code=204)
+        return entry
 
-        return await run_in_threadpool(upload)
+    @app.get("/audit")
+    def get_audit(
+        target: str | None = None,
+        action: Annotated[list[str], Query()] = [],
+        operation_id: int | None = None,
+        limit: Annotated[int, Query(ge=1)] = 50,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ):
+        """Every change made to the Library through the API, newest first."""
+        total, entries = store.audit_page(limit, offset, target, action, operation_id)
+        return {"total": total, "limit": limit, "offset": offset, "results": entries}
 
     @app.get("/config")
     def get_config():
@@ -175,12 +169,12 @@ def create_app() -> FastAPI:
         return modifications.get(id_)
 
     @app.post("/modifications/{id_}/confirm", status_code=202)
-    def confirm_modification(id_: int):
-        return modifications.confirm(id_)
+    def confirm_modification(id_: int, x_client: Annotated[str | None, Header()] = None):
+        return modifications.confirm(id_, x_client)
 
     @app.post("/imports", status_code=202)
-    def create_import(body: ImportRequest):
-        return imports.start(body.model_dump())
+    def create_import(body: ImportRequest, x_client: Annotated[str | None, Header()] = None):
+        return imports.start(body.model_dump(), x_client)
 
     @app.get("/imports/{id_}")
     def get_import(id_: int):

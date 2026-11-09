@@ -78,10 +78,13 @@ def _describe_track_match(index: int, match) -> dict:
 
 
 class ApiImportSession(ImportSession):
-    def __init__(self, lib, paths: list[str], op_id: int, store: Store):
+    def __init__(
+        self, lib, paths: list[str], op_id: int, store: Store, client: str | None = None
+    ):
         super().__init__(lib, None, [os.fsencode(p) for p in paths], None)
         self.op_id = op_id
         self.store = store
+        self.client = client
         self.lock = threading.Lock()
         self.answers: queue.Queue = queue.Queue()
         self.prompt: dict | None = None
@@ -142,8 +145,47 @@ class ApiImportSession(ImportSession):
     def _choices(self, candidates, base: list[str]) -> list[str]:
         return (["apply"] if candidates else []) + base
 
-    def choose_match(self, task):
+    def _track(self, task) -> None:
+        """Audit the task once beets has finished it, files and all."""
+        if task in self.tasks:
+            return
         self.tasks.append(task)
+        finalize = task.finalize
+
+        def finalize_and_audit(session):
+            finalize(session)
+            self._audit(task)
+
+        task.finalize = finalize_and_audit
+
+    def _audit(self, task) -> None:
+        if task.skip:
+            return
+        match = (
+            {"data_source": task.match.info.get("data_source"),
+             "id": task.match.info.get("album_id" if task.is_album else "track_id")}
+            if task.match and task.choice_flag is Action.APPLY else "asis"
+        )
+        changes = {"source": _paths(task.paths), "match": match}
+        if task.is_album:
+            target = f"album:{task.album.id}"
+            changes["items"] = [to_json(i, ["id", "path"]) for i in task.imported_items()]
+        else:
+            target = f"item:{task.item.id}"
+            changes["path"] = json_value(task.item.path)
+        model = target.split(":")[0]
+        self.store.audit(f"{model}.import", target, changes, self.client, self.op_id)
+        # Only the "remove" Choice deletes the duplicates from the Library.
+        if getattr(task, "api_removed_duplicates", None):
+            for dup in task.api_removed_duplicates:
+                self.store.audit(
+                    f"{dup['model']}.remove", f"{dup['model']}:{dup['id']}",
+                    {"removed": dup["fields"], "replaced_by": target},
+                    self.client, self.op_id,
+                )
+
+    def choose_match(self, task):
+        self._track(task)
         while True:
             answer = self._ask(
                 task,
@@ -164,7 +206,7 @@ class ApiImportSession(ImportSession):
             task.candidates, task.rec = proposal
 
     def choose_item(self, task):
-        self.tasks.append(task)
+        self._track(task)
         while True:
             answer = self._ask(
                 task,
@@ -192,6 +234,11 @@ class ApiImportSession(ImportSession):
             choices,
             existing=[to_json(d, fields) for d in found_duplicates],
         )
+        if answer["action"] == "remove":
+            model = "album" if task.is_album else "item"
+            task.api_removed_duplicates = [
+                {"model": model, "id": d.id, "fields": to_json(d)} for d in found_duplicates
+            ]
         return DUPLICATE_ACTIONS[answer["action"]]
 
     def _outcomes(self) -> list[dict]:
@@ -228,7 +275,7 @@ class Imports:
         self.sessions: dict[str, ApiImportSession] = {}
         self.active: ApiImportSession | None = None
 
-    def start(self, request: dict) -> dict:
+    def start(self, request: dict, client: str | None = None) -> dict:
         paths = request["paths"]
         if not paths:
             raise HTTPException(422, "no paths given")
@@ -246,7 +293,7 @@ class Imports:
             settings["singletons"] = request["singletons"]
             forget_cached_paths(self.lib)
             id_ = self.store.create(KIND, "running", request, {"prompt": None, "choices": []})
-            session = ApiImportSession(self.lib, paths, id_, self.store)
+            session = ApiImportSession(self.lib, paths, id_, self.store, client)
             self.sessions[id_] = session
             self.active = session
         threading.Thread(target=self._run, args=(session,), daemon=True).start()

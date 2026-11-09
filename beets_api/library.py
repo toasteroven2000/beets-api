@@ -4,9 +4,8 @@ import hashlib
 import json
 import logging
 import os
-import tempfile
 
-from beets import config, plugins, util
+from beets import config, plugins
 from beets.library import Library
 
 log = logging.getLogger(__name__)
@@ -55,32 +54,3 @@ def fingerprint(fields: dict) -> str:
     data = {k: v for k, v in fields.items() if k != "mtime"}
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
-
-# Sniffed from the bytes rather than trusted from Content-Type.
-IMAGE_SIGNATURES = {b"\xff\xd8\xff": ".jpg", b"\x89PNG\r\n\x1a\n": ".png"}
-
-
-def image_extension(data: bytes) -> str | None:
-    return next((ext for sig, ext in IMAGE_SIGNATURES.items() if data.startswith(sig)), None)
-
-
-def set_album_art(album, data: bytes, extension: str) -> str | None:
-    """Save the image as cover.jpg or cover.png in the Album's directory.
-
-    Returns the previous artpath, whose file is deleted if it was another file.
-
-    Always named `cover`, whatever beets' `art_filename` says; `beet move`
-    would still rename it to that later.
-    """
-    directory = album.item_dir()
-    dest = os.path.join(directory, b"cover" + extension.encode())
-    with tempfile.NamedTemporaryFile(dir=directory, delete=False) as f:
-        f.write(data)
-    os.replace(f.name, dest)  # atomic, so a reader never sees half an image
-    if album.artpath and album.artpath != dest:
-        util.remove(album.artpath)
-    old = album.artpath
-    album.artpath = dest
-    album.store()
-    # No "art_set" event: embedart would embed the image into the Items' files.
-    return json_value(old)

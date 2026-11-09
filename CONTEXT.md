@@ -58,6 +58,20 @@ _Avoid_: Result, suggestion
 What to do with an Import Task, such as applying a Candidate, importing as-is, or skipping.
 _Avoid_: Decision, answer
 
+### Audit
+
+**Audit**:
+The append-only record of every change the API made to the Library. Previews, rejected Modifications and skipped Import Tasks change nothing, so they are not in it.
+_Avoid_: History, log, revisions
+
+**Audit entry**:
+One change to one Album or Item (including its art): when, by which Client, what changed, and the Modification or Import that caused it.
+_Avoid_: Event, revision
+
+**Client**:
+The name a caller gives for itself in the `X-Client` header. Without authentication it is a label, not proof.
+_Avoid_: User, actor
+
 ### Beets extensions
 
 **Plugin**:

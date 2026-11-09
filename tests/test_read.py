@@ -1,7 +1,6 @@
 import os
 import threading
 
-from mediafile import MediaFile
 
 def test_list_items_uses_beets_query_syntax(env):
     env.seed_album("First", titles=("One", "Two"))
@@ -134,80 +133,3 @@ def test_album_art_is_404_without_album_art_or_file(env):
     assert response.status_code == 404
     assert response.json()["detail"] == "album art file is missing"
 
-
-PNG = b"\x89PNG\r\n\x1a\n" + b"png data"
-JPEG = b"\xff\xd8\xff\xe0" + b"jpeg data"
-
-
-def test_upload_album_art_stores_it_beside_the_album(env):
-    album = env.seed_album()
-    response = env.client.put(f"/albums/{album.id}/art", content=PNG)
-    assert response.status_code == 200, response.text
-    artpath = response.json()["result"]["artpath"]
-    assert os.path.dirname(artpath) == os.fsdecode(album.items()[0].path).rsplit("/", 1)[0]
-    assert os.path.basename(artpath) == "cover.png"
-    assert env.lib.get_album(album.id).artpath == os.fsencode(artpath)
-    art = env.client.get(f"/albums/{album.id}/art")
-    assert (art.content, art.headers["content-type"]) == (PNG, "image/png")
-
-
-def test_upload_album_art_replaces_existing_art(env):
-    album = env.seed_album()
-    old = env.client.put(f"/albums/{album.id}/art", content=JPEG).json()["result"]["artpath"]
-    new = env.client.put(f"/albums/{album.id}/art", content=PNG).json()["result"]["artpath"]
-    assert (os.path.basename(old), os.path.basename(new)) == ("cover.jpg", "cover.png")
-    assert not os.path.exists(old)
-    assert env.client.get(f"/albums/{album.id}/art").content == PNG
-
-
-def test_upload_album_art_is_named_cover_whatever_the_config(env):
-    from beets import config
-
-    config["art_filename"] = "folder"
-    album = env.seed_album()
-    artpath = env.client.put(f"/albums/{album.id}/art", content=JPEG).json()["result"]["artpath"]
-    assert os.path.basename(artpath) == "cover.jpg"
-    files = os.listdir(os.path.dirname(artpath))
-    assert sorted(f for f in files if not f.endswith(".mp3")) == ["cover.jpg"]
-
-
-def test_upload_album_art_rejects_bad_requests(env):
-    album = env.seed_album()
-    assert env.client.put("/albums/999/art", content=PNG).status_code == 404
-    response = env.client.put(f"/albums/{album.id}/art", content=b"GIF89a not supported")
-    assert response.status_code == 415
-    assert env.client.put(f"/albums/{album.id}/art", content=b"").status_code == 415
-    assert env.lib.get_album(album.id).artpath is None
-    assert env.client.app.state.store.page("art_upload", [], 10, 0)[0] == 0
-
-
-def test_upload_album_art_rejects_large_images(env, monkeypatch):
-    monkeypatch.setattr("beets_api.app.MAX_ART_BYTES", len(PNG) - 1)
-    album = env.seed_album()
-    assert env.client.put(f"/albums/{album.id}/art", content=PNG).status_code == 413
-
-
-def test_upload_album_art_is_recorded_in_history(env):
-    album = env.seed_album()
-    first = env.client.put(f"/albums/{album.id}/art", content=JPEG).json()
-    second = env.client.put(f"/albums/{album.id}/art", content=PNG).json()
-
-    assert type(second["id"]) is int and second["id"] > first["id"]
-    assert (second["kind"], second["status"]) == ("art_upload", "applied")
-    assert second["request"] == {"album_id": album.id, "format": "png", "bytes": len(PNG)}
-    assert first["result"]["old_artpath"] is None
-    assert second["result"]["old_artpath"] == first["result"]["artpath"]
-    assert second["result"]["artpath"].endswith("/cover.png")
-
-    total, ops = env.client.app.state.store.page("art_upload", [], 10, 0)
-    assert total == 2 and ops[0] == second
-    assert env.client.get("/modifications").json()["total"] == 0
-
-
-def test_upload_album_art_does_not_embed_it(env, monkeypatch):
-    sent = []
-    monkeypatch.setattr("beets.plugins.send", lambda event, **kw: sent.append(event) or [])
-    album = env.seed_album()
-    assert env.client.put(f"/albums/{album.id}/art", content=PNG).status_code == 200
-    assert "art_set" not in sent
-    assert all(not MediaFile(item.path).images for item in env.lib.get_album(album.id).items())

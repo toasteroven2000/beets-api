@@ -265,3 +265,12 @@ def test_list_modifications_excludes_imports(env):
     assert response.status_code == 202, response.text
     env.wait(f"/imports/{response.json()['id']}", "completed", "failed")
     assert list_modifications(env) == {"total": 0, "limit": 50, "offset": 0, "results": []}
+
+
+def test_artpath_cannot_be_modified(env):
+    # Otherwise GET /albums/{id}/art would serve any file the server can read.
+    env.seed_album()
+    for body in ({"set": {"artpath": "/etc/hosts"}}, {"delete": ["artpath"]}):
+        response = env.client.post("/modifications", json={"scope": "album", "query": "", **body})
+        assert response.status_code == 422
+        assert "artpath" in response.json()["detail"]

@@ -19,7 +19,11 @@ devenv up            # or run it as the `web` process
 python -m pytest     # tests
 ```
 
-In the dev shell, `BEETSDIR` points at `db/foobar`, a throwaway library, so your real one in `~/.config/beets` is left alone. Outside devenv, the API uses whichever library `BEETSDIR` or beets' default config points to. Its own history (Modifications, Imports, art uploads) is kept in `beets-api.db` in the beets config directory, or at `BEETS_API_DB`.
+In the dev shell, `BEETSDIR` points at `db/foobar`, a throwaway library, so your real one in `~/.config/beets` is left alone. Outside devenv, the API uses whichever library `BEETSDIR` or beets' default config points to. The API keeps its own SQLite file, `beets-api.db`, in the beets config directory or at `BEETS_API_DB`. It holds the state of Modifications and Imports, and the **audit**: one append-only entry for every Album or Item the API changes, imports, removes, or sets art for. Database triggers refuse any edit or deletion of audit entries. Changes made with `beet` directly are not audited.
+
+Send an `X-Client` header to record which client made a change; without authentication this is a label, not proof.
+
+Album art is only served, written or archived inside the music `directory` from beets' config, and changes are never destructive: a replaced or removed image is copied into the `art_archive` table in `beets-api.db` before its file is deleted, and the audit entry gives the archive row's id. Like the audit, archived images can't be edited or deleted.
 
 Interactive API docs are served at `/docs`.
 
@@ -31,6 +35,8 @@ Interactive API docs are served at `/docs`.
 | `GET` | `/items/{id}`, `/albums/{id}` | One Item or Album |
 | `GET` | `/albums/{id}/art` | The Album's cover image |
 | `PUT` | `/albums/{id}/art` | Upload a JPEG or PNG as `cover.jpg`/`cover.png` (never embedded) |
+| `DELETE` | `/albums/{id}/art` | Remove the Album's art |
+| `GET` | `/audit?target=album:5&action=…` | Every change made to the Library, newest first |
 | `GET` | `/config` | beets config, with secrets redacted |
 | `POST` | `/modifications` | Preview a `beet modify` |
 | `GET` | `/modifications`, `/modifications/{id}` | Modification history, newest first |

@@ -1,4 +1,11 @@
-"""History of write operations, kept in the API's own SQLite file."""
+"""The API's own SQLite file: operations in progress, and the audit.
+
+`operations` holds the changing state of Modifications and Imports.
+`audit` is append-only: one Audit entry per change made to the Library,
+written as it happens. `art_archive` keeps every replaced or removed
+cover image, so art changes are never destructive. Triggers refuse any
+UPDATE or DELETE on either.
+"""
 
 import json
 import sqlite3
@@ -14,7 +21,34 @@ CREATE TABLE IF NOT EXISTS operations (
     result TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
-)
+);
+
+CREATE TABLE IF NOT EXISTS audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at TEXT NOT NULL,
+    client TEXT,
+    action TEXT NOT NULL,
+    target TEXT NOT NULL,
+    operation_id INTEGER,
+    changes TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS audit_target ON audit (target);
+CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit
+BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit
+BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
+
+CREATE TABLE IF NOT EXISTS art_archive (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    archived_at TEXT NOT NULL,
+    album_id INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    data BLOB NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS art_archive_no_update BEFORE UPDATE ON art_archive
+BEGIN SELECT RAISE(ABORT, 'art_archive is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS art_archive_no_delete BEFORE DELETE ON art_archive
+BEGIN SELECT RAISE(ABORT, 'art_archive is append-only'); END;
 """
 
 
@@ -30,7 +64,8 @@ def _decode(row: sqlite3.Row) -> dict:
 class Store:
     def __init__(self, path: str):
         self.path = path
-        self._execute(SCHEMA)
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.executescript(SCHEMA)
 
     def _execute(self, sql: str, *params) -> sqlite3.Cursor:
         with closing(sqlite3.connect(self.path)) as conn, conn:
@@ -69,6 +104,58 @@ class Store:
                 [*params, limit, offset],
             ).fetchall()
         return total, [_decode(row) for row in rows]
+
+    def audit(
+        self,
+        action: str,
+        target: str,
+        changes: dict,
+        client: str | None,
+        operation_id: int | None = None,
+    ) -> dict:
+        """Append an Audit entry, e.g. ("album.modify", "album:5", {...})."""
+        entry = {"at": _now(), "client": client, "action": action, "target": target,
+                 "operation_id": operation_id, "changes": changes}
+        entry["id"] = self._execute(
+            "INSERT INTO audit (at, client, action, target, operation_id, changes)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            *(entry[k] for k in ("at", "client", "action", "target", "operation_id")),
+            json.dumps(changes),
+        ).lastrowid
+        return entry
+
+    def archive_art(self, album_id: int, path: str, data: bytes) -> int:
+        return self._execute(
+            "INSERT INTO art_archive (archived_at, album_id, path, data) VALUES (?, ?, ?, ?)",
+            _now(), album_id, path, data,
+        ).lastrowid
+
+    def audit_page(
+        self,
+        limit: int,
+        offset: int,
+        target: str | None = None,
+        actions: list[str] = (),
+        operation_id: int | None = None,
+    ) -> tuple[int, list[dict]]:
+        """Newest first."""
+        where, params = ["1"], []
+        if actions:
+            where.append(f"action IN ({','.join('?' * len(actions))})")
+            params += actions
+        for column, value in (("target", target), ("operation_id", operation_id)):
+            if value is not None:
+                where.append(f"{column} = ?")
+                params.append(value)
+        clause = " AND ".join(where)
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.row_factory = sqlite3.Row
+            total = conn.execute(f"SELECT count(*) FROM audit WHERE {clause}", params).fetchone()[0]
+            rows = conn.execute(
+                f"SELECT * FROM audit WHERE {clause} ORDER BY id DESC LIMIT ? OFFSET ?",
+                [*params, limit, offset],
+            ).fetchall()
+        return total, [dict(row) | {"changes": json.loads(row["changes"])} for row in rows]
 
     def update(self, id_: int, status: str, result: dict) -> None:
         self._execute(
