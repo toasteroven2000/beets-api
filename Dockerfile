@@ -1,16 +1,17 @@
-# syntax=docker/dockerfile:1
 # Minimal image: distroless Python (no shell, no pip) plus beets and the API.
-# Versions match devenv.nix, which the tests run against.
+# Pins are the versions devenv.nix uses; update both together.
 
 # Must match the Python in the final stage (Debian 13 ships 3.13).
 FROM python:3.13-slim-trixie AS build
 # Plugin code ships with beets; extras add the libraries some plugins need.
-ARG BEETS_EXTRAS=fetchart,embedart,web,lastgenre,discogs
 RUN pip install --no-cache-dir --target /deps \
-      "beets[${BEETS_EXTRAS}]==2.13.1" \
+      "beets[fetchart,embedart,lastgenre]==2.13.1" \
       fastapi==0.141.1 \
       uvicorn==0.51.0 \
-      pydantic==2.13.4
+      pydantic==2.13.4 \
+ # Console scripts can't run without a shell, and test suites are never imported.
+ && rm -rf /deps/bin \
+ && find /deps -type d -name tests -prune -exec rm -rf {} +
 COPY beets_api /deps/beets_api
 
 FROM gcr.io/distroless/python3-debian13:nonroot
