@@ -191,6 +191,15 @@ def create_app() -> FastAPI:
     def create_import(body: ImportRequest, x_client: Annotated[str | None, Header()] = None):
         return imports.start(body.model_dump(), x_client)
 
+    @app.get("/imports")
+    def list_imports(
+        status: Annotated[list[str], Query()] = [],
+        limit: Annotated[int, Query(ge=1)] = 50,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ):
+        """Import history, newest first."""
+        return imports.page(status, limit, offset)
+
     @app.get("/imports/{id_}")
     def get_import(id_: int):
         return imports.get(id_)

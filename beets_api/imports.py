@@ -78,6 +78,20 @@ def _describe_track_match(index: int, match) -> dict:
     }
 
 
+def _summary(op: dict) -> dict:
+    """An Import without its prompt, whose Candidates can be large."""
+    result = op["result"]
+    outcomes = result.get("outcomes", [])
+    counts = {
+        "choices": len(result["choices"]),
+        "tasks": len(outcomes),
+        "skipped": sum(o["skipped"] for o in outcomes),
+        "items": sum(len(o["items"]) for o in outcomes),
+    }
+    keys = ("id", "status", "request", "created_at", "updated_at")
+    return {k: op[k] for k in keys} | {"counts": counts}
+
+
 class ApiImportSession(ImportSession):
     def __init__(
         self, lib, paths: list[str], op_id: int, store: Store, client: str | None = None
@@ -318,6 +332,15 @@ class Imports:
         if op is None:
             raise HTTPException(404, "import not found")
         return op
+
+    def page(self, statuses: list[str], limit: int, offset: int) -> dict:
+        total, ops = self.store.page(KIND, statuses, limit, offset)
+        return {
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "results": [_summary(op) for op in ops],
+        }
 
     def _active_session(self, id_: int) -> ApiImportSession:
         self.get(id_)

@@ -50,7 +50,7 @@ Interactive API docs are served at `/docs`.
 | `GET` | `/modifications`, `/modifications/{id}` | Modification history, newest first |
 | `POST` | `/modifications/{id}/confirm` | Apply a Preview |
 | `POST` | `/imports` | Start an import from server paths |
-| `GET` | `/imports/{id}` | Import progress and the current prompt |
+| `GET` | `/imports`, `/imports/{id}` | Import history, newest first; one Import's progress and current prompt |
 | `POST` | `/imports/{id}/choice` | Answer an import prompt |
 | `DELETE` | `/imports/{id}` | Abort an import |
 

@@ -291,3 +291,63 @@ def test_empty_import_paths_refuse_every_import(env, source, monkeypatch):
     restart_with_import_paths(env, monkeypatch, "")
     response = env.client.post("/imports", json={"paths": [source]})
     assert response.status_code == 403
+
+
+def list_imports(env, **params):
+    response = env.client.get("/imports", params=params)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def empty_import(env, name):
+    (env.tmp_path / name).mkdir()
+    id_ = start(env, str(env.tmp_path / name))
+    finish(env, id_)
+    return id_
+
+
+def test_list_imports_newest_first_with_paging(env):
+    ids = [empty_import(env, f"empty{n}") for n in range(3)]
+
+    body = list_imports(env)
+    assert body["total"] == 3
+    assert [i["id"] for i in body["results"]] == ids[::-1]
+
+    page = list_imports(env, limit=1, offset=1)
+    assert (page["total"], page["limit"], page["offset"]) == (3, 1, 1)
+    assert [i["id"] for i in page["results"]] == [ids[1]]
+
+
+def test_list_imports_summarises_without_the_prompt(env, source):
+    id_ = start(env, source)
+    prompt(env, id_)
+    [waiting] = list_imports(env)["results"]
+    assert set(waiting) == {"id", "status", "request", "created_at", "updated_at", "counts"}
+    assert waiting["status"] == "waiting_for_choice"
+    assert waiting["counts"] == {"choices": 0, "tasks": 0, "skipped": 0, "items": 0}
+
+    choose(env, id_, "asis")
+    assert finish(env, id_)["status"] == "completed"
+    [done] = list_imports(env)["results"]
+    assert done["request"]["paths"] == [source]
+    assert done["counts"] == {"choices": 1, "tasks": 1, "skipped": 0, "items": 2}
+
+
+def test_list_imports_filters_by_status(env, source):
+    completed = empty_import(env, "empty")
+    aborted = start(env, source)
+    choose(env, aborted, "abort")
+    finish(env, aborted)
+
+    def ids(*statuses):
+        return [i["id"] for i in list_imports(env, status=list(statuses))["results"]]
+
+    assert ids("aborted") == [aborted]
+    assert ids("completed", "aborted") == [aborted, completed]
+    assert list_imports(env, status="no_such_status")["total"] == 0
+
+
+def test_list_imports_excludes_modifications(env):
+    env.seed_album()
+    env.preview(scope="item", query="", set={"comments": "x"})
+    assert list_imports(env) == {"total": 0, "limit": 50, "offset": 0, "results": []}
