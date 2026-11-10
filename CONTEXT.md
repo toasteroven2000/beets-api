@@ -46,6 +46,10 @@ _Avoid_: Approve, commit
 Bringing music files from server paths into the Library. This is a core beets command, not a Plugin.
 _Avoid_: Ingest, upload
 
+**Import Path**:
+A directory beets-api allows Imports to read from. Whatever is picked for an Import lies inside one.
+_Avoid_: Inbox, source folder, drop folder
+
 **Import Task**:
 One Album's or one Item's worth of files within an Import, which needs its own Choice.
 _Avoid_: Job

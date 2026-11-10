@@ -40,13 +40,25 @@ def _paths(paths) -> list[str]:
     return [json_value(p) for p in paths]
 
 
+# Fields a person checks a Candidate by. They are sent whether or not they
+# change, so a client can show what a Candidate is, not only what it changes.
+SHOWN_FIELDS = (
+    "albumartist", "album", "year", "month", "day", "label", "catalognum",
+    "country", "media", "albumtype", "artist", "title", "track", "disc", "length",
+)
+
+
 def _track_changes(item, data: dict) -> dict:
     changes = {
         key: {"old": json_value(item.get(key)), "new": json_value(value)}
         for key, value in data.items()
         if item.get(key) != value
     }
-    return {"path": json_value(item.path), "changes": changes}
+    fields = {
+        key: {"old": json_value(item.get(key)), "new": json_value(data.get(key, item.get(key)))}
+        for key in SHOWN_FIELDS
+    }
+    return {"path": json_value(item.path), "changes": changes, "fields": fields}
 
 
 def _describe_album_match(index: int, match) -> dict:

@@ -76,6 +76,11 @@ def test_apply_candidate_shows_changes_then_applies(env, source, monkeypatch):
     assert candidate["album"] == "Right Album"
     changes = candidate["tracks"][0]["changes"]
     assert changes["album"] == {"old": "My Album", "new": "Right Album"}
+    fields = candidate["tracks"][0]["fields"]
+    assert fields["album"] == {"old": "My Album", "new": "Right Album"}
+    # Unchanged fields are sent too, so a client can show what they are.
+    assert "title" not in changes or changes["title"]["old"] != changes["title"]["new"]
+    assert set(fields) >= {"label", "country", "title", "track", "length"}
 
     choose(env, id_, "apply", candidate=0)
     assert finish(env, id_)["status"] == "completed"
