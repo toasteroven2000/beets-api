@@ -237,8 +237,8 @@ def main() -> int:
     output_dir: Path = args.output_dir.resolve()
     ensure_empty_output_dir(output_dir)
 
-    music_dir = "Music"
-    library_db = "library.db"
+    music_dir = output_dir / "Music"
+    library_db = output_dir / "library.db"
     music_dir.mkdir(parents=True, exist_ok=True)
 
     beets_config = output_dir / "config.yaml"
