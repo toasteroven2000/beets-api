@@ -52,6 +52,8 @@ Interactive API docs are served at `/docs`.
 | `POST` | `/imports` | Start an import from server paths |
 | `GET` | `/imports`, `/imports/{id}` | Import history, newest first; one Import's progress and current prompt |
 | `POST` | `/imports/{id}/choice` | Answer an import prompt |
+| `GET` | `/imports/{id}/undo` | Preview undoing an Import: the Albums, Items and files it would remove, and `reasons` if it may not be undone. Changes nothing |
+| `POST` | `/imports/{id}/undo` | Remove what an Import added and the files it copied in; `409` with the reasons when unsafe. Only a plain `copy` Import can be undone, and not once anything it made has been changed, or if it replaced existing records |
 | `DELETE` | `/imports/{id}` | Abort an import |
 
 Terms such as Item, Album, Modification and Preview are defined in [CONTEXT.md](CONTEXT.md). Design decisions are in [docs/adr](docs/adr).

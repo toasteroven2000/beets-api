@@ -208,6 +208,16 @@ def create_app() -> FastAPI:
     def choose(id_: int, body: ChoiceRequest):
         return imports.choose(id_, body.model_dump())
 
+    @app.get("/imports/{id_}/undo")
+    def preview_undo(id_: int):
+        """What undoing the Import would remove, and why it may not be undone."""
+        return imports.undo_preview(id_)
+
+    @app.post("/imports/{id_}/undo")
+    def undo_import(id_: int, x_client: Annotated[str | None, Header()] = None):
+        """Remove what the Import added and the files it copied. 409 when unsafe."""
+        return imports.undo(id_, x_client)
+
     @app.delete("/imports/{id_}", status_code=202)
     def abort_import(id_: int):
         return imports.abort(id_)

@@ -356,3 +356,150 @@ def test_list_imports_excludes_modifications(env):
     env.seed_album()
     env.preview(scope="item", query="", set={"comments": "x"})
     assert list_imports(env) == {"total": 0, "limit": 50, "offset": 0, "results": []}
+
+
+# ---- undo ----
+
+def imported(env, source, action="asis", **details):
+    id_ = start(env, source)
+    choose(env, id_, action, **details)
+    assert finish(env, id_)["status"] == "completed"
+    return id_
+
+
+def undo_url(id_):
+    return f"/imports/{id_}/undo"
+
+
+def test_import_records_how_it_handled_the_files(env, source):
+    assert env.client.get(f"/imports/{imported(env, source)}").json()["result"]["mode"] == "copy"
+
+
+def test_preview_lists_what_would_go_and_changes_nothing(env, source):
+    id_ = imported(env, source)
+    preview = env.client.get(undo_url(id_)).json()
+    assert preview["allowed"] is True and preview["reasons"] == []
+    (album,) = preview["albums"]
+    assert album["target"].startswith("album:") and len(album["items"]) == 2
+    assert all(os.path.exists(i["path"]) for i in album["items"])
+    assert len(env.lib.items()) == 2
+
+
+def test_undo_removes_albums_items_and_copied_files_and_keeps_the_originals(env, source):
+    id_ = imported(env, source)
+    paths = [i.path for i in env.lib.items()]
+    folder = os.path.dirname(paths[0])
+    done = env.client.post(undo_url(id_), headers={"X-Client": "beets-ui"})
+    assert done.status_code == 200, done.text
+    assert len(env.lib.items()) == 0 and len(env.lib.albums()) == 0
+    assert not any(os.path.exists(p) for p in paths)
+    assert not os.path.exists(folder)  # the emptied album directory goes too
+    assert len(os.listdir(os.path.join(source, "a"))) == 2  # originals stay
+
+    entry = done.json()["audit"][0]
+    assert (entry["action"], entry["operation_id"], entry["client"]) == ("album.remove", id_, "beets-ui")
+    assert entry["changes"]["undo_of_import"] == id_ and len(entry["changes"]["files"]) == 2
+    assert entry["changes"]["removed"]["album"]["album"] == "My Album"
+    listed = env.client.get("/audit", params={"operation_id": id_}).json()["results"]
+    assert {e["action"] for e in listed} == {"album.import", "album.remove"}
+
+
+def test_undoing_twice_is_refused(env, source):
+    id_ = imported(env, source)
+    assert env.client.post(undo_url(id_)).status_code == 200
+    again = env.client.post(undo_url(id_))
+    assert again.status_code == 409 and "already undone" in again.json()["detail"]
+    assert env.client.get(undo_url(id_)).json()["allowed"] is False
+
+
+def test_undo_is_refused_after_a_modification(env, source):
+    id_ = imported(env, source)
+    preview = env.preview(scope="album", query="album:'My Album'", set={"genre": "Rock"})
+    env.confirm(preview["id"])
+    refused = env.client.post(undo_url(id_))
+    assert refused.status_code == 409 and "later changes" in refused.json()["detail"]
+    body = env.client.get(undo_url(id_)).json()
+    assert body["allowed"] is False and body["changes_since"][0]["action"] == "album.modify"
+    assert len(env.lib.items()) == 2
+
+
+def test_undo_is_refused_after_an_art_change(env, source):
+    id_ = imported(env, source)
+    album = env.lib.albums().get()
+    png = b"\x89PNG\r\n\x1a\n" + b"\0" * 20
+    assert env.client.put(f"/albums/{album.id}/art", content=png).status_code == 200
+    assert "later changes" in env.client.post(undo_url(id_)).json()["detail"]
+
+
+@pytest.mark.parametrize("settings, reason", [
+    ("move: yes", "moved its files"),
+    ("copy: yes\n  delete: yes", "deleted the originals"),
+    ("copy: no\n  link: yes", "linked"),
+    ("copy: no", "where they were"),
+])
+def test_undo_is_refused_unless_the_files_were_copied(env, source, settings, reason):
+    config = env.tmp_path / "home" / "config.yaml"
+    config.write_text(config.read_text().replace("copy: yes", settings))
+    restart(env)
+    id_ = imported(env, source)
+    refused = env.client.post(undo_url(id_))
+    assert refused.status_code == 409 and reason in refused.json()["detail"]
+    assert len(env.lib.items()) == 2
+
+
+def test_undo_is_refused_for_an_import_with_no_recorded_mode(env, source):
+    id_ = imported(env, source)
+    op = env.client.app.state.store.get(id_, "import")
+    del op["result"]["mode"]
+    env.client.app.state.store.update(id_, op["status"], op["result"])
+    refused = env.client.post(undo_url(id_))
+    assert refused.status_code == 409 and "did not record" in refused.json()["detail"]
+
+
+def test_undo_is_refused_when_the_import_replaced_a_duplicate(env, source):
+    imported(env, source)
+    second = start(env, source)
+    env.wait(f"/imports/{second}", "waiting_for_choice")
+    choose(env, second, "asis")  # a duplicate prompt follows
+    choose(env, second, "remove")
+    assert finish(env, second)["status"] == "completed"
+    refused = env.client.post(undo_url(second))
+    assert refused.status_code == 409 and "replaced" in refused.json()["detail"]
+
+
+def test_undo_is_refused_while_the_import_is_active(env, source):
+    id_ = start(env, source)
+    prompt(env, id_)
+    refused = env.client.post(undo_url(id_))
+    assert refused.status_code == 409 and "still active" in refused.json()["detail"]
+    env.client.delete(f"/imports/{id_}")
+
+
+def test_undo_is_refused_when_a_file_moved_since(env, source):
+    id_ = imported(env, source)
+    item = env.lib.items().get()
+    old = item.path
+    item.move()  # beets would only move it if the path template changed
+    item.path = old.replace(b"One", b"Uno") if b"One" in old else old + b".x"
+    item.store()
+    assert env.client.post(undo_url(id_)).status_code == 409
+
+
+def test_undo_a_singleton_import(env, source):
+    id_ = imported_singletons(env, source)
+    done = env.client.post(undo_url(id_))
+    assert done.status_code == 200, done.text
+    assert len(env.lib.items()) == 0
+
+
+def imported_singletons(env, source):
+    id_ = start(env, source, singletons=True)
+    for _ in range(2):
+        choose(env, id_, "asis")
+    assert finish(env, id_)["status"] == "completed"
+    return id_
+
+
+def test_undo_unknown_import_is_404(env):
+    assert env.client.get(undo_url(99)).status_code == 404
+    assert env.client.post(undo_url(99)).status_code == 404

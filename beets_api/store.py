@@ -157,6 +157,24 @@ class Store:
             ).fetchall()
         return total, [dict(row) | {"changes": json.loads(row["changes"])} for row in rows]
 
+    def audit_entries(
+        self, operation_id: int | None = None, targets: list[str] = ()
+    ) -> list[dict]:
+        """Every matching entry, oldest first: by Import or Modification, or by target."""
+        where, params = ["1"], []
+        if operation_id is not None:
+            where.append("operation_id = ?")
+            params.append(operation_id)
+        if targets:
+            where.append(f"target IN ({','.join('?' * len(targets))})")
+            params += targets
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                f"SELECT * FROM audit WHERE {' AND '.join(where)} ORDER BY id", params
+            ).fetchall()
+        return [dict(row) | {"changes": json.loads(row["changes"])} for row in rows]
+
     def update(self, id_: int, status: str, result: dict) -> None:
         self._execute(
             "UPDATE operations SET status = ?, result = ?, updated_at = ? WHERE id = ?",

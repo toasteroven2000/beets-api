@@ -18,6 +18,7 @@ from fastapi import HTTPException
 from .import_paths import inside
 from .library import forget_cached_paths, json_value, to_json
 from .store import Store
+from .undo import import_mode, plan_undo, undo_import
 
 log = logging.getLogger(__name__)
 
@@ -106,12 +107,14 @@ def _summary(op: dict) -> dict:
 
 class ApiImportSession(ImportSession):
     def __init__(
-        self, lib, paths: list[str], op_id: int, store: Store, client: str | None = None
+        self, lib, paths: list[str], op_id: int, store: Store, client: str | None = None,
+        mode: str | None = None,
     ):
         super().__init__(lib, None, [os.fsencode(p) for p in paths], None)
         self.op_id = op_id
         self.store = store
         self.client = client
+        self.mode = mode
         self.lock = threading.Lock()
         self.answers: queue.Queue = queue.Queue()
         self.prompt: dict | None = None
@@ -120,7 +123,7 @@ class ApiImportSession(ImportSession):
         self.tasks: list = []
 
     def _save(self, status: str, **extra) -> None:
-        result = {"prompt": self.prompt, "choices": self.history} | extra
+        result = {"prompt": self.prompt, "choices": self.history, "mode": self.mode} | extra
         self.store.update(self.op_id, status, result)
 
     def _ask(self, task, kind: str, choices: list[str], **details) -> dict:
@@ -324,8 +327,11 @@ class Imports:
             settings["pretend"] = False
             settings["singletons"] = request["singletons"]
             forget_cached_paths(self.lib)
-            id_ = self.store.create(KIND, "running", request, {"prompt": None, "choices": []})
-            session = ApiImportSession(self.lib, paths, id_, self.store, client)
+            # Kept with the Import: config can change later, and undo depends on it.
+            mode = import_mode(settings)
+            result = {"prompt": None, "choices": [], "mode": mode}
+            id_ = self.store.create(KIND, "running", request, result)
+            session = ApiImportSession(self.lib, paths, id_, self.store, client, mode)
             self.sessions[id_] = session
             self.active = session
         threading.Thread(target=self._run, args=(session,), daemon=True).start()
@@ -369,3 +375,16 @@ class Imports:
     def abort(self, id_: int) -> dict:
         self._active_session(id_).abort()
         return self.get(id_)
+
+    def undo_preview(self, id_: int) -> dict:
+        """What undoing the Import would remove, and whether it may. Changes nothing."""
+        return plan_undo(self.lib, self.store, self.get(id_), self._is_active(id_))
+
+    def undo(self, id_: int, client: str | None = None) -> dict:
+        with self.lock:  # no Import starts, nor another undo runs, meanwhile
+            return undo_import(
+                self.lib, self.store, self.get(id_), self._is_active(id_), client
+            )
+
+    def _is_active(self, id_: int) -> bool:
+        return self.active is not None and self.active.op_id == id_
