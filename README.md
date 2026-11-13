@@ -21,7 +21,7 @@ python -m pytest     # tests
 
 In the dev shell, `BEETSDIR` points at `db/foobar`, a throwaway library, so your real one in `~/.config/beets` is left alone. Outside devenv, the API uses whichever library `BEETSDIR` or beets' default config points to. The API keeps its own SQLite file, `beets-api.db`. It holds the state of Modifications and Imports, and the **audit**: one append-only entry for every Album or Item the API changes, imports, removes, or sets art for. Database triggers refuse any edit or deletion of audit entries. Changes made with `beet` directly are not audited.
 
-Send an `X-Client` header to record which client made a change; without authentication this is a label, not proof.
+Send `X-Beets-API-Client` (the program) and `X-Beets-API-Actor` (the person it acts for) to record who made a change; `X-Client` is still accepted for the Client. beets-api has no authentication, so both are labels, not proof: it relies on only trusted callers, such as beets-ui behind a proxy that signs people in, being able to reach it. The Actor is at most 200 characters with no control characters, or the request is refused with `400`. Each Choice of an Import records its own Actor, and the Audit entry for a change takes the Actor of the Choice that caused it: whoever picked the Candidate for an `album.import`, whoever chose "remove" for a duplicate's `album.remove`. A Modification takes whoever confirmed it.
 
 Album art is only served, written or archived inside the music `directory` from beets' config, and changes are never destructive: a replaced or removed image is copied into the `art_archive` table in `beets-api.db` before its file is deleted, and the audit entry gives the archive row's id. Like the audit, archived images can't be edited or deleted.
 
@@ -44,7 +44,7 @@ Interactive API docs are served at `/docs`.
 | `GET` | `/albums/{id}/art` | The Album's cover image |
 | `PUT` | `/albums/{id}/art` | Upload a JPEG or PNG as `cover.jpg`/`cover.png` (never embedded) |
 | `DELETE` | `/albums/{id}/art` | Remove the Album's art |
-| `GET` | `/audit?target=album:5&action=…` | Every change made to the Library, newest first |
+| `GET` | `/audit?target=album:5&action=…&actor=…` | Every change made to the Library, newest first |
 | `GET` | `/config` | beets config, with secrets redacted |
 | `POST` | `/modifications` | Preview a `beet modify` |
 | `GET` | `/modifications`, `/modifications/{id}` | Modification history, newest first |

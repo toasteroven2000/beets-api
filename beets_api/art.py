@@ -14,6 +14,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+from .caller import Caller
 from .library import json_value
 from .store import Store
 
@@ -74,7 +75,7 @@ class AlbumArt:
         os.remove(path)
         return {"id": id_, "from": json_value(path), "bytes": len(data)}
 
-    def upload(self, album_id: int, data: bytes, client: str | None) -> dict:
+    def upload(self, album_id: int, data: bytes, caller: Caller) -> dict:
         """Save the image as cover.jpg or cover.png in the Album's directory.
 
         Always named `cover`, whatever beets' `art_filename` says; `beet move`
@@ -106,9 +107,11 @@ class AlbumArt:
                 "archived": archived,
                 "left_in_place": left,
             }
-            return self.store.audit("art.upload", f"album:{album_id}", changes, client)
+            return self.store.audit(
+                "art.upload", f"album:{album_id}", changes, caller.client, actor=caller.actor
+            )
 
-    def remove(self, album_id: int, client: str | None) -> dict | None:
+    def remove(self, album_id: int, caller: Caller) -> dict | None:
         """Clear the Album's art. Removing art that isn't there changes nothing."""
         with self.lock:
             album = self._album(album_id)
@@ -122,4 +125,6 @@ class AlbumArt:
                 "archived": archived,
                 "left_in_place": left,
             }
-            return self.store.audit("art.remove", f"album:{album_id}", changes, client)
+            return self.store.audit(
+                "art.remove", f"album:{album_id}", changes, caller.client, actor=caller.actor
+            )

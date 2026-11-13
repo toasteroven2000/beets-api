@@ -11,6 +11,7 @@ from beets.util import functemplate
 from fastapi import HTTPException
 
 from .library import fingerprint, forget_cached_paths, json_value, to_json
+from .caller import Caller
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -215,7 +216,7 @@ class Modifications:
     def _reject(self, op: dict, stale: list[dict]) -> None:
         self.store.update(op["id"], "rejected", op["result"] | {"stale": stale})
 
-    def confirm(self, id_: int, client: str | None = None) -> dict:
+    def confirm(self, id_: int, caller: Caller = Caller()) -> dict:
         op = self.get(id_)
         if op["status"] != "awaiting_confirmation":
             raise HTTPException(409, f"cannot confirm while {op['status']}")
@@ -224,11 +225,11 @@ class Modifications:
             raise HTTPException(409, {"detail": "library changed since Preview", "stale": stale})
         if not self.store.transition(id_, "awaiting_confirmation", "queued"):
             raise HTTPException(409, "already confirmed")
-        self.executor.submit(self._apply, id_, client)
+        self.executor.submit(self._apply, id_, caller)
         return self.get(id_)
 
     def _apply_one(
-        self, id_: int, result: dict, kind: str, entry: dict, apply_entry, client: str | None
+        self, id_: int, result: dict, kind: str, entry: dict, apply_entry, caller: Caller
     ) -> None:
         ref = {"kind": kind, "id": entry["id"]}
         result["current"] = ref
@@ -241,13 +242,13 @@ class Modifications:
             return
         result["applied"].append(ref | ({"path": path} if path else {}))
         model = kind.removesuffix("s")  # "albums" -> "album"
-        self.store.audit(f"{model}.modify", f"{model}:{entry['id']}", entry["changes"], client, id_)
+        self.store.audit(f"{model}.modify", f"{model}:{entry['id']}", entry["changes"], caller.client, id_, caller.actor)
 
-    def _apply(self, id_: int, client: str | None) -> None:
+    def _apply(self, id_: int, caller: Caller) -> None:
         with self.lib.music_dir_context():
-            self._apply_all(id_, client)
+            self._apply_all(id_, caller)
 
-    def _apply_all(self, id_: int, client: str | None) -> None:
+    def _apply_all(self, id_: int, caller: Caller) -> None:
         op = self.get(id_)
         result = op["result"] | {"applied": [], "failed": [], "current": None}
         try:
@@ -259,14 +260,14 @@ class Modifications:
             write, move = result["write"], result["move"]
             for entry in result["preview"]["albums"]:
                 self._apply_one(
-                    id_, result, "albums", entry, lambda e: _apply_album(self.lib, e), client
+                    id_, result, "albums", entry, lambda e: _apply_album(self.lib, e), caller
                 )
             # Items' new paths depend on the Albums stored above.
             forget_cached_paths(self.lib)
             for entry in result["preview"]["items"]:
                 self._apply_one(
                     id_, result, "items", entry,
-                    lambda e: _apply_item(self.lib, e, write, move), client,
+                    lambda e: _apply_item(self.lib, e, write, move), caller,
                 )
             result["current"] = None
             self.store.update(id_, "partial" if result["failed"] else "applied", result)
