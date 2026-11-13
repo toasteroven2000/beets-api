@@ -11,11 +11,12 @@ from typing import Annotated, Literal
 
 from beets import config
 from beets.dbcore.query import ParsingError
-from fastapi import FastAPI, Header, HTTPException, Query, Request, responses
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, responses
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from .caller import Caller, caller
 from .import_paths import browse, import_roots
 from .imports import Imports
 from .art import AlbumArt
@@ -134,15 +135,15 @@ def create_app() -> FastAPI:
 
     @app.put("/albums/{id_}/art")
     async def put_album_art(
-        id_: int, request: Request, x_client: Annotated[str | None, Header()] = None
+        id_: int, request: Request, who: Annotated[Caller, Depends(caller)]
     ):
         """The body is the image itself (JPEG or PNG), not a multipart form."""
         data = await request.body()
-        return await run_in_threadpool(art.upload, id_, data, x_client)
+        return await run_in_threadpool(art.upload, id_, data, who)
 
     @app.delete("/albums/{id_}/art")
-    def delete_album_art(id_: int, x_client: Annotated[str | None, Header()] = None):
-        if (entry := art.remove(id_, x_client)) is None:
+    def delete_album_art(id_: int, who: Annotated[Caller, Depends(caller)]):
+        if (entry := art.remove(id_, who)) is None:
             return responses.Response(status_code=204)
         return entry
 
@@ -151,11 +152,12 @@ def create_app() -> FastAPI:
         target: str | None = None,
         action: Annotated[list[str], Query()] = [],
         operation_id: int | None = None,
+        actor: str | None = None,
         limit: Annotated[int, Query(ge=1)] = 50,
         offset: Annotated[int, Query(ge=0)] = 0,
     ):
         """Every change made to the Library through the API, newest first."""
-        total, entries = store.audit_page(limit, offset, target, action, operation_id)
+        total, entries = store.audit_page(limit, offset, target, action, operation_id, actor)
         return {"total": total, "limit": limit, "offset": offset, "results": entries}
 
     @app.get("/config")
@@ -179,8 +181,8 @@ def create_app() -> FastAPI:
         return modifications.get(id_)
 
     @app.post("/modifications/{id_}/confirm", status_code=202)
-    def confirm_modification(id_: int, x_client: Annotated[str | None, Header()] = None):
-        return modifications.confirm(id_, x_client)
+    def confirm_modification(id_: int, who: Annotated[Caller, Depends(caller)]):
+        return modifications.confirm(id_, who)
 
     @app.get("/import-paths")
     def get_import_paths(path: str | None = None):
@@ -188,8 +190,8 @@ def create_app() -> FastAPI:
         return browse(roots, path)
 
     @app.post("/imports", status_code=202)
-    def create_import(body: ImportRequest, x_client: Annotated[str | None, Header()] = None):
-        return imports.start(body.model_dump(), x_client)
+    def create_import(body: ImportRequest, who: Annotated[Caller, Depends(caller)]):
+        return imports.start(body.model_dump(), who)
 
     @app.get("/imports")
     def list_imports(
@@ -205,8 +207,8 @@ def create_app() -> FastAPI:
         return imports.get(id_)
 
     @app.post("/imports/{id_}/choice", status_code=202)
-    def choose(id_: int, body: ChoiceRequest):
-        return imports.choose(id_, body.model_dump())
+    def choose(id_: int, body: ChoiceRequest, who: Annotated[Caller, Depends(caller)]):
+        return imports.choose(id_, body.model_dump(), who)
 
     @app.get("/imports/{id_}/undo")
     def preview_undo(id_: int):
@@ -214,12 +216,12 @@ def create_app() -> FastAPI:
         return imports.undo_preview(id_)
 
     @app.post("/imports/{id_}/undo")
-    def undo_import(id_: int, x_client: Annotated[str | None, Header()] = None):
+    def undo_import(id_: int, who: Annotated[Caller, Depends(caller)]):
         """Remove what the Import added and the files it copied. 409 when unsafe."""
-        return imports.undo(id_, x_client)
+        return imports.undo(id_, who)
 
     @app.delete("/imports/{id_}", status_code=202)
-    def abort_import(id_: int):
-        return imports.abort(id_)
+    def abort_import(id_: int, who: Annotated[Caller, Depends(caller)]):
+        return imports.abort(id_, who)
 
     return app

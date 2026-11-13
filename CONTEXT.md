@@ -69,12 +69,16 @@ The append-only record of every change the API made to the Library. Previews, re
 _Avoid_: History, log, revisions
 
 **Audit entry**:
-One change to one Album or Item (including its art): when, by which Client, what changed, and the Modification or Import that caused it.
+One change to one Album or Item (including its art): when, by which Client and Actor, what changed, and the Modification or Import that caused it.
 _Avoid_: Event, revision
 
 **Client**:
-The name a caller gives for itself in the `X-Client` header. Without authentication it is a label, not proof.
-_Avoid_: User, actor
+The program making a request, named by the caller in the `X-Beets-API-Client` header (`X-Client` before it was prefixed). Without authentication it is a label, not proof.
+_Avoid_: User, caller
+
+**Actor**:
+The person a Client acted for, named in the `X-Beets-API-Actor` header. beets-api does not sign anyone in, so the Client asserts it, such as beets-ui reading it from the proxy that did. It is recorded on Audit entries and on each Choice of an Import, so every Library change says who made it. Empty when the Client names nobody.
+_Avoid_: User, account, Client
 
 ### Beets extensions
 

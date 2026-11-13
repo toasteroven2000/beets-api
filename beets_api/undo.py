@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from beets import util
 from fastapi import HTTPException
 
+from .caller import Caller
 from .library import json_value, to_json
 
 COPY = "copy"
@@ -131,7 +132,7 @@ def _delete(lib, path: str | None) -> bool:
     return True
 
 
-def undo_import(lib, store, op: dict, active: bool, client: str | None) -> dict:
+def undo_import(lib, store, op: dict, active: bool, caller: Caller) -> dict:
     """Remove what the Import added, then its files, auditing each as it goes."""
     plan = plan_undo(lib, store, op, active)
     if not plan["allowed"]:
@@ -144,7 +145,8 @@ def undo_import(lib, store, op: dict, active: bool, client: str | None) -> dict:
         files = [p for p in (*(i["path"] for i in album["items"]), album["art"]) if _delete(lib, p)]
         removed.append(store.audit(
             "album.remove", album["target"],
-            {"removed": fields, "files": files, "undo_of_import": op["id"]}, client, op["id"],
+            {"removed": fields, "files": files, "undo_of_import": op["id"]},
+            caller.client, op["id"], caller.actor,
         ))
     for item in plan["items"]:
         record = lib.get_item(item["id"])
@@ -153,7 +155,8 @@ def undo_import(lib, store, op: dict, active: bool, client: str | None) -> dict:
         files = [item["path"]] if _delete(lib, item["path"]) else []
         removed.append(store.audit(
             "item.remove", item["target"],
-            {"removed": fields, "files": files, "undo_of_import": op["id"]}, client, op["id"],
+            {"removed": fields, "files": files, "undo_of_import": op["id"]},
+            caller.client, op["id"], caller.actor,
         ))
     store.update(op["id"], op["status"], op["result"] | {"undone": {"at": datetime.now(UTC).isoformat()}})
     return plan | {"allowed": False, "undone": True, "audit": removed}

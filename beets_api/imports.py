@@ -15,6 +15,7 @@ from beets.autotag import tag_album, tag_item
 from beets.importer import Action, DuplicateAction, ImportAbortError, ImportSession
 from fastapi import HTTPException
 
+from .caller import Caller
 from .import_paths import inside
 from .library import forget_cached_paths, json_value, to_json
 from .store import Store
@@ -107,13 +108,17 @@ def _summary(op: dict) -> dict:
 
 class ApiImportSession(ImportSession):
     def __init__(
-        self, lib, paths: list[str], op_id: int, store: Store, client: str | None = None,
+        self, lib, paths: list[str], op_id: int, store: Store, caller: Caller = Caller(),
         mode: str | None = None,
     ):
         super().__init__(lib, None, [os.fsencode(p) for p in paths], None)
         self.op_id = op_id
         self.store = store
-        self.client = client
+        self.client = caller.client
+        self.actor = caller.actor  # who started the Import
+        # Who gave the Choice that decided each Task, so each Library change is
+        # attributed to the person who made it, not only to whoever started the Import.
+        self.actors: dict[int, str | None] = {}
         self.mode = mode
         self.lock = threading.Lock()
         self.answers: queue.Queue = queue.Queue()
@@ -123,7 +128,9 @@ class ApiImportSession(ImportSession):
         self.tasks: list = []
 
     def _save(self, status: str, **extra) -> None:
-        result = {"prompt": self.prompt, "choices": self.history, "mode": self.mode} | extra
+        result = {
+            "prompt": self.prompt, "choices": self.history, "mode": self.mode, "actor": self.actor,
+        } | extra
         self.store.update(self.op_id, status, result)
 
     def _ask(self, task, kind: str, choices: list[str], **details) -> dict:
@@ -139,6 +146,8 @@ class ApiImportSession(ImportSession):
             }
             self._save("waiting_for_choice")
         answer = self.answers.get()
+        if kind != "duplicate":
+            self.actors[id(task)] = answer.get("actor")
         self.history.append({"paths": _paths(task.paths), "kind": kind, **answer})
         self._save("running")
         if answer["action"] == "abort":
@@ -165,12 +174,12 @@ class ApiImportSession(ImportSession):
             self.prompt = None
             self.answers.put(request)
 
-    def abort(self) -> None:
+    def abort(self, actor: str | None = None) -> None:
         with self.lock:
             self.abort_requested = True
             if self.prompt is not None:
                 self.prompt = None
-                self.answers.put({"prompt_id": None, "action": "abort"})
+                self.answers.put({"prompt_id": None, "action": "abort", "actor": actor})
 
     def _choices(self, candidates, base: list[str]) -> list[str]:
         return (["apply"] if candidates else []) + base
@@ -204,14 +213,15 @@ class ApiImportSession(ImportSession):
             target = f"item:{task.item.id}"
             changes["path"] = json_value(task.item.path)
         model = target.split(":")[0]
-        self.store.audit(f"{model}.import", target, changes, self.client, self.op_id)
+        actor = self.actors.get(id(task), self.actor)
+        self.store.audit(f"{model}.import", target, changes, self.client, self.op_id, actor)
         # Only the "remove" Choice deletes the duplicates from the Library.
         if getattr(task, "api_removed_duplicates", None):
             for dup in task.api_removed_duplicates:
                 self.store.audit(
                     f"{dup['model']}.remove", f"{dup['model']}:{dup['id']}",
                     {"removed": dup["fields"], "replaced_by": target},
-                    self.client, self.op_id,
+                    self.client, self.op_id, dup["actor"],
                 )
 
     def choose_match(self, task):
@@ -267,7 +277,8 @@ class ApiImportSession(ImportSession):
         if answer["action"] == "remove":
             model = "album" if task.is_album else "item"
             task.api_removed_duplicates = [
-                {"model": model, "id": d.id, "fields": to_json(d)} for d in found_duplicates
+                {"model": model, "id": d.id, "fields": to_json(d), "actor": answer.get("actor")}
+                for d in found_duplicates
             ]
         return DUPLICATE_ACTIONS[answer["action"]]
 
@@ -306,7 +317,7 @@ class Imports:
         self.sessions: dict[str, ApiImportSession] = {}
         self.active: ApiImportSession | None = None
 
-    def start(self, request: dict, client: str | None = None) -> dict:
+    def start(self, request: dict, caller: Caller = Caller()) -> dict:
         paths = request["paths"]
         if not paths:
             raise HTTPException(422, "no paths given")
@@ -331,7 +342,7 @@ class Imports:
             mode = import_mode(settings)
             result = {"prompt": None, "choices": [], "mode": mode}
             id_ = self.store.create(KIND, "running", request, result)
-            session = ApiImportSession(self.lib, paths, id_, self.store, client, mode)
+            session = ApiImportSession(self.lib, paths, id_, self.store, caller, mode)
             self.sessions[id_] = session
             self.active = session
         threading.Thread(target=self._run, args=(session,), daemon=True).start()
@@ -368,22 +379,22 @@ class Imports:
             raise HTTPException(409, "this import is not active")
         return active
 
-    def choose(self, id_: int, request: dict) -> dict:
-        self._active_session(id_).answer(request)
+    def choose(self, id_: int, request: dict, caller: Caller = Caller()) -> dict:
+        self._active_session(id_).answer(request | {"actor": caller.actor})
         return self.get(id_)
 
-    def abort(self, id_: int) -> dict:
-        self._active_session(id_).abort()
+    def abort(self, id_: int, caller: Caller = Caller()) -> dict:
+        self._active_session(id_).abort(caller.actor)
         return self.get(id_)
 
     def undo_preview(self, id_: int) -> dict:
         """What undoing the Import would remove, and whether it may. Changes nothing."""
         return plan_undo(self.lib, self.store, self.get(id_), self._is_active(id_))
 
-    def undo(self, id_: int, client: str | None = None) -> dict:
+    def undo(self, id_: int, caller: Caller = Caller()) -> dict:
         with self.lock:  # no Import starts, nor another undo runs, meanwhile
             return undo_import(
-                self.lib, self.store, self.get(id_), self._is_active(id_), client
+                self.lib, self.store, self.get(id_), self._is_active(id_), caller
             )
 
     def _is_active(self, id_: int) -> bool:

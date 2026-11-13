@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     at TEXT NOT NULL,
     client TEXT,
+    actor TEXT,
     action TEXT NOT NULL,
     target TEXT NOT NULL,
     operation_id INTEGER,
@@ -66,6 +67,10 @@ class Store:
         self.path = path
         with closing(sqlite3.connect(self.path)) as conn:
             conn.executescript(SCHEMA)
+            # Audits written before Actors existed have none. Adding a column is
+            # not an UPDATE, so the append-only triggers allow it.
+            if "actor" not in {r[1] for r in conn.execute("PRAGMA table_info(audit)")}:
+                conn.execute("ALTER TABLE audit ADD COLUMN actor TEXT")
 
     def _execute(self, sql: str, *params) -> sqlite3.Cursor:
         with closing(sqlite3.connect(self.path)) as conn, conn:
@@ -112,14 +117,15 @@ class Store:
         changes: dict,
         client: str | None,
         operation_id: int | None = None,
+        actor: str | None = None,
     ) -> dict:
         """Append an Audit entry, e.g. ("album.modify", "album:5", {...})."""
-        entry = {"at": _now(), "client": client, "action": action, "target": target,
-                 "operation_id": operation_id, "changes": changes}
+        entry = {"at": _now(), "client": client, "actor": actor, "action": action,
+                 "target": target, "operation_id": operation_id, "changes": changes}
         entry["id"] = self._execute(
-            "INSERT INTO audit (at, client, action, target, operation_id, changes)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            *(entry[k] for k in ("at", "client", "action", "target", "operation_id")),
+            "INSERT INTO audit (at, client, actor, action, target, operation_id, changes)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            *(entry[k] for k in ("at", "client", "actor", "action", "target", "operation_id")),
             json.dumps(changes),
         ).lastrowid
         return entry
@@ -137,13 +143,14 @@ class Store:
         target: str | None = None,
         actions: list[str] = (),
         operation_id: int | None = None,
+        actor: str | None = None,
     ) -> tuple[int, list[dict]]:
         """Newest first."""
         where, params = ["1"], []
         if actions:
             where.append(f"action IN ({','.join('?' * len(actions))})")
             params += actions
-        for column, value in (("target", target), ("operation_id", operation_id)):
+        for column, value in (("target", target), ("operation_id", operation_id), ("actor", actor)):
             if value is not None:
                 where.append(f"{column} = ?")
                 params.append(value)
