@@ -105,7 +105,7 @@ class AlbumArt:
                 "left_in_place": left,
             }
             return self.store.audit(
-                "art.upload", f"album:{album_id}", changes, caller.client, actor=caller.actor
+                "art.upload", f"album:{album_id}", changes, caller
             )
 
     def remove(self, album_id: int, caller: Caller) -> dict | None:
@@ -123,5 +123,5 @@ class AlbumArt:
                 "left_in_place": left,
             }
             return self.store.audit(
-                "art.remove", f"album:{album_id}", changes, caller.client, actor=caller.actor
+                "art.remove", f"album:{album_id}", changes, caller
             )
