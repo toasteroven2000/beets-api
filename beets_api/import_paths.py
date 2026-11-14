@@ -11,27 +11,23 @@ from datetime import UTC, datetime
 
 from fastapi import HTTPException
 
+from .roots import Roots
+
 log = logging.getLogger(__name__)
 
 
-def import_roots(value: str | None) -> list[str] | None:
+def import_roots(value: str | None) -> Roots | None:
     """Parse BEETS_API_IMPORT_PATHS: directories joined by os.pathsep, like PATH.
 
     None means the variable is unset and Imports may read from anywhere.
     """
     if value is None:
         return None
-    roots = [os.path.realpath(p) for p in value.split(os.pathsep) if p]
+    roots = Roots(p for p in value.split(os.pathsep) if p)
     for root in roots:
         if not os.path.isdir(root):
             log.warning("import path is not a directory: %s", root)
     return roots
-
-
-def inside(path: str, roots: list[str]) -> bool:
-    """Compared after resolving symlinks, so a link can't point outside."""
-    real = os.path.realpath(path)
-    return any(os.path.commonpath([root, real]) == root for root in roots)
 
 
 def _entry(path: str) -> dict | None:
@@ -61,7 +57,7 @@ def _sort_key(entry: dict):
     return (entry["type"] != "dir", entry["name"].casefold(), entry["name"])
 
 
-def browse(roots: list[str] | None, path: str | None) -> dict:
+def browse(roots: Roots | None, path: str | None) -> dict:
     """The Import Paths themselves without a path, otherwise one directory's children."""
     if path is None:
         entries = [e for root in roots or [] if (e := _entry(root)) and e["type"] == "dir"]
@@ -69,7 +65,7 @@ def browse(roots: list[str] | None, path: str | None) -> dict:
     if not os.path.isabs(path):
         raise HTTPException(400, "path must be absolute")
     path = os.path.normpath(path)
-    if roots is None or not inside(path, roots):
+    if roots is None or not roots.contains(path):
         raise HTTPException(403, "path is outside BEETS_API_IMPORT_PATHS")
     if not os.path.exists(path):
         raise HTTPException(404, "path not found")
@@ -80,6 +76,6 @@ def browse(roots: list[str] | None, path: str | None) -> dict:
     except PermissionError:
         raise HTTPException(403, "directory is not readable") from None
     children = (os.path.join(path, n) for n in names if not n.startswith("."))
-    entries = [e for p in children if inside(p, roots) and (e := _entry(p))]
-    parent = None if os.path.realpath(path) in roots else os.path.dirname(path)
+    entries = [e for p in children if roots.contains(p) and (e := _entry(p))]
+    parent = None if roots.is_root(path) else os.path.dirname(path)
     return {"path": path, "parent": parent, "entries": sorted(entries, key=_sort_key)}

@@ -20,6 +20,7 @@ from fastapi import HTTPException
 
 from .caller import Caller
 from .library import json_value, to_json
+from .roots import Roots
 
 COPY = "copy"
 MODE_REASONS = {
@@ -41,12 +42,6 @@ def import_mode(settings) -> str:
     if any(settings[kind].get(bool) for kind in ("link", "hardlink", "reflink")):
         return "link"
     return "in_place"
-
-
-def _inside(lib, path: bytes) -> bool:
-    """Compared after resolving symlinks, so a link can't point outside."""
-    root = os.path.realpath(lib.directory)
-    return os.path.commonpath([root, os.path.realpath(path)]) == root
 
 
 def _is_import_of(entry: dict, id_: int) -> bool:
@@ -114,9 +109,10 @@ def plan_undo(lib, store, op: dict, active: bool) -> dict:
         reasons.append(f"{len(changed_since)} later changes were made to what the Import added")
 
     albums, items = _created(made, lib, reasons)
+    music_dir = Roots([lib.directory])
     files = [p for a in albums for p in (*(i["path"] for i in a["items"]), a["art"]) if p]
     files += [i["path"] for i in items]
-    if outside := [p for p in files if not _inside(lib, os.fsencode(p))]:
+    if outside := [p for p in files if not music_dir.contains(p)]:
         reasons.append(f"files are outside the music directory: {outside}")
     return {
         "import_id": id_, "mode": mode, "allowed": not reasons, "reasons": reasons,
