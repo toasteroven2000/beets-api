@@ -395,10 +395,11 @@ def test_undo_removes_albums_items_and_copied_files_and_keeps_the_originals(env,
     assert not any(os.path.exists(p) for p in paths)
     assert not os.path.exists(folder)  # the emptied album directory goes too
     assert len(os.listdir(os.path.join(source, "a"))) == 2  # originals stay
+    assert len(list((env.trash / str(id_)).rglob("*.mp3"))) == 2  # the copies are in the Trash
 
     entry = done.json()["audit"][0]
     assert (entry["action"], entry["operation_id"], entry["client"]) == ("album.remove", id_, "beets-ui")
-    assert entry["changes"]["undo_of_import"] == id_ and len(entry["changes"]["files"]) == 2
+    assert entry["changes"]["undo_of_import"] == id_ and len(entry["changes"]["trashed_to"]) == 2
     assert entry["changes"]["removed"]["album"]["album"] == "My Album"
     listed = env.client.get("/audit", params={"operation_id": id_}).json()["results"]
     assert {e["action"] for e in listed} == {"album.import", "album.remove"}
@@ -494,3 +495,44 @@ def imported_singletons(env, source):
 def test_undo_unknown_import_is_404(env):
     assert env.client.get(undo_url(99)).status_code == 404
     assert env.client.post(undo_url(99)).status_code == 404
+
+
+def test_a_removed_duplicate_has_its_files_moved_to_the_trash(env, source):
+    old = env.seed_album()
+    old_paths = [os.fsdecode(i.path) for i in old.items()]
+    id_ = start(env, source)
+    choose(env, id_, "asis")
+    choose(env, id_, "remove")
+    assert finish(env, id_)["status"] == "completed"
+    entries = env.client.get("/audit", params={"action": "album.remove"}).json()["results"]
+    (entry,) = [e for e in entries if e["operation_id"] == id_]
+    assert sorted(t["from"] for t in entry["changes"]["trashed_to"]) == sorted(old_paths)
+    assert all(t["to"].startswith(str(env.trash / str(id_))) and os.path.exists(t["to"])
+               for t in entry["changes"]["trashed_to"])
+    assert entry["changes"]["left_in_place"] == []
+    assert len(env.lib.items()) == 2  # only the new Album remains
+
+
+def test_removing_a_duplicate_is_refused_when_the_trash_is_not_configured(env, source, monkeypatch):
+    env.seed_album()
+    monkeypatch.delenv("BEETS_API_TRASH_DIR")
+    restart(env)
+    id_ = start(env, source)
+    choose(env, id_, "asis")
+    current = prompt(env, id_)
+    refused = env.client.post(
+        f"/imports/{id_}/choice", json={"prompt_id": current["id"], "action": "remove"}
+    )
+    assert refused.status_code == 409 and "Trash" in refused.json()["detail"]
+    choose(env, id_, "skip")  # the prompt is still open, so another Choice works
+    assert finish(env, id_)["status"] == "completed"
+
+
+def test_undo_says_why_when_the_trash_is_not_configured(env, source, monkeypatch):
+    id_ = imported(env, source)
+    monkeypatch.delenv("BEETS_API_TRASH_DIR")
+    restart(env)
+    preview = env.client.get(undo_url(id_)).json()
+    assert preview["allowed"] is False and any("Trash" in r for r in preview["reasons"])
+    assert env.client.post(undo_url(id_)).status_code == 409
+    assert len(env.lib.items()) == 2

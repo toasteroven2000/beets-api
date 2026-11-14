@@ -1,6 +1,9 @@
 import os
 import shutil
 
+from conftest import restart
+
+
 
 def preview(env, **body):
     response = env.client.post("/removals", json=body)
@@ -36,10 +39,12 @@ def test_preview_changes_nothing_then_confirm_removes_records_and_files(env):
     assert env.lib.get_album(album.id) is None
     assert env.lib.items() is not None and len(env.lib.items()) == 0
     assert not any(os.path.exists(p) for p in paths)
+    assert sorted(p.name for p in (env.trash / str(op["id"])).rglob("*.mp3")) == sorted(
+        os.path.basename(p) for p in paths)  # moved, not deleted
     (record,) = audit(env, action="album.remove")
     assert (record["target"], record["actor"], record["operation_id"]) == (
         f"album:{album.id}", "dana", op["id"])
-    assert sorted(record["changes"]["files"]) == sorted(paths)
+    assert sorted(t["from"] for t in record["changes"]["trashed_to"]) == sorted(paths)
     assert record["changes"]["left_in_place"] == []
 
 
@@ -111,3 +116,15 @@ def test_history_lists_removals_without_their_preview(env):
     page = env.client.get("/removals").json()
     assert page["total"] == 1 and page["results"][0]["id"] == op["id"]
     assert page["results"][0]["counts"]["albums"] == 1 and "result" not in page["results"][0]
+
+
+def test_preview_works_but_confirm_is_refused_when_the_trash_is_not_configured(env, monkeypatch):
+    album = env.seed_album()
+    monkeypatch.delenv("BEETS_API_TRASH_DIR")
+    restart(env)
+    op = preview(env, scope="album", query=f"id:{album.id}")
+    assert op["status"] == "awaiting_confirmation" and op["result"]["trash_configured"] is False
+    refused = env.client.post(f"/removals/{op['id']}/confirm")
+    assert refused.status_code == 409 and "Trash" in refused.json()["detail"]
+    assert env.lib.get_album(album.id) is not None
+    assert env.client.get(f"/removals/{op['id']}").json()["status"] == "awaiting_confirmation"

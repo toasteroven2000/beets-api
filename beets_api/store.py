@@ -2,9 +2,7 @@
 
 `operations` holds the changing state of Modifications and Imports.
 `audit` is append-only: one Audit entry per change made to the Library,
-written as it happens. `art_archive` keeps every replaced or removed
-cover image, so art changes are never destructive. Triggers refuse any
-UPDATE or DELETE on either.
+written as it happens. Triggers refuse any UPDATE or DELETE on it.
 """
 
 import json
@@ -41,18 +39,6 @@ CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit
 BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit
 BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
-
-CREATE TABLE IF NOT EXISTS art_archive (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    archived_at TEXT NOT NULL,
-    album_id INTEGER NOT NULL,
-    path TEXT NOT NULL,
-    data BLOB NOT NULL
-);
-CREATE TRIGGER IF NOT EXISTS art_archive_no_update BEFORE UPDATE ON art_archive
-BEGIN SELECT RAISE(ABORT, 'art_archive is append-only'); END;
-CREATE TRIGGER IF NOT EXISTS art_archive_no_delete BEFORE DELETE ON art_archive
-BEGIN SELECT RAISE(ABORT, 'art_archive is append-only'); END;
 """
 
 
@@ -128,12 +114,6 @@ class Store:
             json.dumps(changes),
         ).lastrowid
         return entry
-
-    def archive_art(self, album_id: int, path: str, data: bytes) -> int:
-        return self._execute(
-            "INSERT INTO art_archive (archived_at, album_id, path, data) VALUES (?, ?, ?, ?)",
-            _now(), album_id, path, data,
-        ).lastrowid
 
     def audit_page(
         self,

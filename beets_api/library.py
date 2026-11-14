@@ -5,7 +5,7 @@ import json
 import logging
 import os
 
-from beets import config, plugins, util
+from beets import config, plugins
 from beets.library import Library
 
 log = logging.getLogger(__name__)
@@ -32,15 +32,6 @@ def forget_cached_paths(lib: Library) -> None:
     goes stale in a server, so files would move to outdated paths.
     """
     lib._memotable.clear()
-
-
-def delete_file(lib: Library, path: str | None) -> bool:
-    """Delete a file and prune the directories it leaves empty, up to the music directory."""
-    if not path or not os.path.isfile(path):
-        return False
-    os.remove(path)
-    util.prune_dirs(os.path.dirname(os.fsencode(path)), root=lib.directory)
-    return True
 
 
 def default_store_path() -> str:

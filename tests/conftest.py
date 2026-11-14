@@ -36,6 +36,10 @@ class Env:
         self.client = client
 
     @property
+    def trash(self):
+        return self.tmp_path / "trash"
+
+    @property
     def lib(self):
         return self.client.app.state.lib
 
@@ -85,6 +89,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("BEETSDIR", str(home))
     monkeypatch.delenv("BEETS_API_DB", raising=False)
     monkeypatch.delenv("BEETS_API_IMPORT_PATHS", raising=False)
+    monkeypatch.setenv("BEETS_API_TRASH_DIR", str(tmp_path / "trash"))
     with TestClient(create_app(), base_url="http://localhost") as client:
         yield Env(tmp_path, client)
 

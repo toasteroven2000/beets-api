@@ -4,6 +4,7 @@ python -m uvicorn --factory beets_api.app:create_app --host 127.0.0.1 --port 833
 """
 
 import json
+from datetime import datetime
 import logging
 import os
 from itertools import islice
@@ -22,8 +23,10 @@ from .imports import Imports
 from .art import AlbumArt
 from .library import default_store_path, open_library, to_json
 from .modify import Modifications
+from .purges import Purges
 from .removals import Removals
 from .store import Store
+from .trash import Trash
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +50,11 @@ class ModificationRequest(BaseModel):
 class RemovalRequest(BaseModel):
     scope: Literal["item", "album"]
     query: str
+
+
+class PurgeRequest(BaseModel):
+    folders: list[str] | None = None
+    older_than: datetime | None = None
 
 
 class ImportRequest(BaseModel):
@@ -82,15 +90,22 @@ def create_app() -> FastAPI:
     log.info("history: %s", store_path)
     store = Store(store_path)
     store.mark_interrupted(("queued", "applying", "running", "waiting_for_choice"))
+    trash = Trash(os.environ.get("BEETS_API_TRASH_DIR"), lib.directory)
     modifications = Modifications(lib, store)
-    removals = Removals(lib, store)
+    removals = Removals(lib, store, trash)
+    purges = Purges(store, trash)
     roots = import_roots(os.environ.get("BEETS_API_IMPORT_PATHS"))
     if roots is None:
         log.warning("BEETS_API_IMPORT_PATHS is unset: imports may read any path")
     else:
         log.info("imports allowed from: %s", roots)
-    imports = Imports(lib, store, roots)
-    art = AlbumArt(lib, store)
+    if not trash.configured:
+        log.warning("BEETS_API_TRASH_DIR is unset: anything that would delete files is refused")
+    else:
+        log.info("trash: %s", trash.directory)
+        trash.warn_if_inside(roots)
+    imports = Imports(lib, store, trash, roots)
+    art = AlbumArt(lib, store, trash)
 
     app = FastAPI(title="beets-api", default_response_class=JSONResponse)
     app.state.lib = lib
@@ -217,6 +232,32 @@ def create_app() -> FastAPI:
     @app.post("/removals/{id_}/confirm", status_code=202)
     def confirm_removal(id_: int, who: Annotated[Caller, Depends(caller)]):
         return removals.confirm(id_, who)
+
+    @app.get("/trash")
+    def get_trash():
+        """What is in the Trash, a folder per operation."""
+        return purges.listing()
+
+    @app.post("/purges", status_code=201)
+    def create_purge(body: PurgeRequest):
+        """Preview deleting Trash folders for good. With no filters, all of them."""
+        return purges.create(body.model_dump(mode="json"))
+
+    @app.get("/purges")
+    def list_purges(
+        status: Annotated[list[str], Query()] = [],
+        limit: Annotated[int, Query(ge=1)] = 50,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ):
+        return purges.page(status, limit, offset)
+
+    @app.get("/purges/{id_}")
+    def get_purge(id_: int):
+        return purges.get(id_)
+
+    @app.post("/purges/{id_}/confirm", status_code=202)
+    def confirm_purge(id_: int, who: Annotated[Caller, Depends(caller)]):
+        return purges.confirm(id_, who)
 
     @app.get("/import-paths")
     def get_import_paths(path: str | None = None):

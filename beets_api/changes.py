@@ -22,14 +22,14 @@ class ArtUpload:  # art.upload
     artpath: OldNew
     format: str
     bytes: int
-    archived: list[dict]
+    trashed_to: list[dict]  # {"from", "to"} of each file moved to the Trash
     left_in_place: list[str]
 
 
 @dataclass(frozen=True)
 class ArtRemoval:  # art.remove
     artpath: OldNew
-    archived: list[dict]
+    trashed_to: list[dict]
     left_in_place: list[str]
 
 
@@ -51,17 +51,25 @@ class ItemImport:  # item.import
 class Replaced:  # album.remove / item.remove, by an Import replacing duplicates
     removed: dict
     replaced_by: str
+    trashed_to: list[dict]
+    left_in_place: list[str]
 
 
 @dataclass(frozen=True)
 class Removed:  # album.remove / item.remove, by a Removal
     removed: dict
-    files: list[str]
-    left_in_place: list[str]  # files outside the music directory, never deleted
+    trashed_to: list[dict]
+    left_in_place: list[str]  # files outside the music directory, never moved
 
 
 @dataclass(frozen=True)
 class Undone:  # album.remove / item.remove, by undoing an Import
     removed: dict
-    files: list[str]
+    trashed_to: list[dict]
     undo_of_import: int
+
+
+@dataclass(frozen=True)
+class Purged:  # trash.purge
+    files: int
+    bytes: int

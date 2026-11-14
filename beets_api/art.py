@@ -1,4 +1,4 @@
-"""Album art changes, each written to the audit and none ever destructive.
+"""Album art changes, each written to the audit. A replaced or removed image goes to the Trash.
 
 Art is only ever a standalone file beside the Album's Items: nothing here
 embeds it into the Items' files or reads a path from a request. Files are
@@ -19,6 +19,7 @@ from .changes import ArtRemoval, ArtUpload, OldNew
 from .library import json_value
 from .roots import Roots
 from .store import Store
+from .trash import Trash, art_folder
 
 MAX_BYTES = 20 * 1024 * 1024
 
@@ -31,10 +32,11 @@ def image_extension(data: bytes) -> str | None:
 
 
 class AlbumArt:
-    def __init__(self, lib, store: Store):
+    def __init__(self, lib, store: Store, trash: Trash):
         self.lib = lib
         self.store = store
-        # One change at a time, so two uploads can't archive the same file.
+        self.trash = trash
+        # One change at a time, so two uploads can't move the same file.
         self.lock = threading.Lock()
         self.music_dir = Roots([lib.directory])
 
@@ -52,26 +54,6 @@ class AlbumArt:
         if not path.is_file():
             raise HTTPException(404, "album art file is missing")
         return path
-
-    def _set_aside(self, album_id: int, paths) -> tuple[list[dict], list[str]]:
-        """Archive files inside the music directory; leave any others untouched."""
-        archived, left = [], []
-        for path in dict.fromkeys(filter(None, paths)):
-            if not self.music_dir.contains(path):
-                left.append(json_value(path))
-            elif entry := self._archive(album_id, path):
-                archived.append(entry)
-        return archived, left
-
-    def _archive(self, album_id: int, path: bytes) -> dict | None:
-        """Copy a replaced or removed image into the database, then delete the file."""
-        if not os.path.isfile(path):
-            return None
-        with open(path, "rb") as f:
-            data = f.read()
-        id_ = self.store.archive_art(album_id, json_value(path), data)
-        os.remove(path)
-        return {"id": id_, "from": json_value(path), "bytes": len(data)}
 
     def upload(self, album_id: int, data: bytes, caller: Caller) -> dict:
         """Save the image as cover.jpg or cover.png in the Album's directory.
@@ -94,12 +76,16 @@ class AlbumArt:
             with tempfile.NamedTemporaryFile(dir=directory, delete=False) as f:
                 f.write(data)
             # A file already at dest may not be the recorded art; keep it too.
-            archived, left = self._set_aside(album_id, (old, dest))
+            try:
+                trashed, left = self.trash.put_all(art_folder(album_id), (old, dest))
+            except Exception:
+                os.remove(f.name)
+                raise
             os.replace(f.name, dest)
             album.artpath = dest
             album.store()
             changes = ArtUpload(
-                OldNew(json_value(old), json_value(dest)), extension[1:], len(data), archived, left
+                OldNew(json_value(old), json_value(dest)), extension[1:], len(data), trashed, left
             )
             return self.store.audit(
                 "art.upload", f"album:{album_id}", changes, caller
@@ -111,10 +97,10 @@ class AlbumArt:
             album = self._album(album_id)
             if not (old := album.artpath):
                 return None
-            archived, left = self._set_aside(album_id, (old,))
+            trashed, left = self.trash.put_all(art_folder(album_id), (old,))
             album.artpath = None
             album.store()
-            changes = ArtRemoval(OldNew(json_value(old), None), archived, left)
+            changes = ArtRemoval(OldNew(json_value(old), None), trashed, left)
             return self.store.audit(
                 "art.remove", f"album:{album_id}", changes, caller
             )

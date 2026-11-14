@@ -18,6 +18,7 @@ from fastapi import HTTPException
 from .caller import Caller
 from .changes import AlbumImport, ItemImport, Replaced
 from .roots import Roots
+from .trash import Trash
 from .library import forget_cached_paths, json_value, to_json
 from .store import Store
 from .undo import Undo, import_mode
@@ -109,12 +110,13 @@ def _summary(op: dict) -> dict:
 
 class ApiImportSession(ImportSession):
     def __init__(
-        self, lib, paths: list[str], op_id: int, store: Store, caller: Caller = Caller(),
-        mode: str | None = None,
+        self, lib, paths: list[str], op_id: int, store: Store, trash: Trash,
+        caller: Caller = Caller(), mode: str | None = None,
     ):
         super().__init__(lib, None, [os.fsencode(p) for p in paths], None)
         self.op_id = op_id
         self.store = store
+        self.trash = trash
         self.client = caller.client
         self.actor = caller.actor  # who started the Import
         # Who gave the Choice that decided each Task, so each Library change is
@@ -163,6 +165,8 @@ class ApiImportSession(ImportSession):
             action = request["action"]
             if action not in prompt["choices"]:
                 raise HTTPException(422, f"choose one of {prompt['choices']}")
+            if prompt["kind"] == "duplicate" and action == "remove":
+                self.trash.require()  # the old files go to the Trash
             if action == "apply" and not (
                 request["candidate"] is not None
                 and 0 <= request["candidate"] < len(prompt["candidates"])
@@ -219,9 +223,10 @@ class ApiImportSession(ImportSession):
         # Only the "remove" Choice deletes the duplicates from the Library.
         if getattr(task, "api_removed_duplicates", None):
             for dup in task.api_removed_duplicates:
+                trashed, left = task.api_trashed.get(dup["id"], ([], []))
                 self.store.audit(
                     f"{dup['model']}.remove", f"{dup['model']}:{dup['id']}",
-                    Replaced(dup["fields"], target),
+                    Replaced(dup["fields"], target, trashed, left),
                     Caller(self.client, dup["actor"]), self.op_id,
                 )
 
@@ -281,7 +286,20 @@ class ApiImportSession(ImportSession):
                 {"model": model, "id": d.id, "fields": to_json(d), "actor": answer.get("actor")}
                 for d in found_duplicates
             ]
+            task.api_trashed = {}
+            # beets' own remove_duplicates deletes the old files; this moves them to the Trash.
+            task.remove_duplicates = lambda lib: self._trash_duplicates(task, lib)
         return DUPLICATE_ACTIONS[answer["action"]]
+
+    def _trash_duplicates(self, task, lib) -> None:
+        for dup in task.find_duplicates(lib):
+            if task.is_album:
+                files = [*(i.path for i in dup.items()), dup.artpath]
+                dup.remove(delete=False, with_items=True)
+            else:
+                files = [dup.path]
+                dup.remove(delete=False)
+            task.api_trashed[dup.id] = self.trash.put_all(str(self.op_id), files)
 
     def _outcomes(self) -> list[dict]:
         outcomes = []
@@ -310,11 +328,12 @@ class ApiImportSession(ImportSession):
 
 
 class Imports:
-    def __init__(self, lib, store: Store, roots: Roots | None = None):
+    def __init__(self, lib, store: Store, trash: Trash, roots: Roots | None = None):
         self.lib = lib
         self.store = store
         self.roots = roots
-        self.undoer = Undo(lib, store)
+        self.trash = trash
+        self.undoer = Undo(lib, store, trash)
         self.lock = threading.Lock()
         self.sessions: dict[str, ApiImportSession] = {}
         self.active: ApiImportSession | None = None
@@ -344,7 +363,7 @@ class Imports:
             mode = import_mode(settings)
             result = {"prompt": None, "choices": [], "mode": mode}
             id_ = self.store.create(KIND, "running", request, result)
-            session = ApiImportSession(self.lib, paths, id_, self.store, caller, mode)
+            session = ApiImportSession(self.lib, paths, id_, self.store, self.trash, caller, mode)
             self.sessions[id_] = session
             self.active = session
         threading.Thread(target=self._run, args=(session,), daemon=True).start()

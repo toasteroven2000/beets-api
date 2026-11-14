@@ -1,4 +1,4 @@
-"""Undoing an Import: remove what it added to the Library, and the files it copied in.
+"""Undoing an Import: remove what it added to the Library, and move the files it copied in to the Trash.
 
 beets has no undo, so this works from the Audit, which records every Album and
 Item an Import made and where its files went. It only ever acts when that is safe:
@@ -9,7 +9,7 @@ Item an Import made and where its files went. It only ever acts when that is saf
   file that is no longer where the Audit says);
 - it did not replace existing Albums or Items, whose files are already gone.
 
-Only paths the Audit names are deleted, and only inside the music directory.
+Only paths the Audit names are moved, and only inside the music directory.
 """
 
 from datetime import UTC, datetime
@@ -18,8 +18,9 @@ from fastapi import HTTPException
 
 from .caller import Caller
 from .changes import AlbumImport, ItemImport, Undone
-from .library import delete_file, json_value, to_json
+from .library import json_value, to_json
 from .roots import Roots
+from .trash import Trash
 
 COPY = "copy"
 MODE_REASONS = {
@@ -80,9 +81,10 @@ def _created(entries: list[dict], lib) -> tuple[list[dict], list[dict], list[str
 class Undo:
     """Undoes Imports against a Library, working from the Store's Audit."""
 
-    def __init__(self, lib, store):
+    def __init__(self, lib, store, trash: Trash):
         self.lib = lib
         self.store = store
+        self.trash = trash
         self.music_dir = Roots([lib.directory])
 
     def plan(self, op: dict, active: bool) -> dict:
@@ -96,6 +98,8 @@ class Undo:
             reasons.append(MODE_REASONS[mode])
         if op["result"].get("undone"):
             reasons.append("this Import was already undone")
+        if not self.trash.configured:
+            reasons.append("the Trash is not configured: set BEETS_API_TRASH_DIR")
 
         entries = self.store.audit_entries(operation_id=id_)
         made = [e for e in entries if e["action"] in IMPORT_ACTIONS]
@@ -105,7 +109,7 @@ class Undo:
         if replaced:
             reasons.append(
                 f"the Import replaced {len(replaced)} existing "
-                f"{'record' if len(replaced) == 1 else 'records'} whose files were deleted: "
+                f"{'record' if len(replaced) == 1 else 'records'} whose files were moved to the Trash: "
                 + ", ".join(e["target"] for e in replaced)
             )
         changed_since = [
@@ -136,8 +140,8 @@ class Undo:
         for album in plan["albums"]:
             record = self.lib.get_album(album["id"])
             fields = {"album": to_json(record), "items": [to_json(i) for i in record.items()]}
-            record.remove(delete=False, with_items=True)  # the files are deleted below, from the Audit's paths
-            files = [p for p in (*(i["path"] for i in album["items"]), album["art"]) if delete_file(self.lib, p)]
+            record.remove(delete=False, with_items=True)  # the files go to the Trash below, from the Audit's paths
+            files, _ = self.trash.put_all(str(op["id"]), (*(i["path"] for i in album["items"]), album["art"]))
             removed.append(self.store.audit(
                 "album.remove", album["target"],
                 Undone(fields, files, op["id"]), caller, op["id"],
@@ -146,7 +150,7 @@ class Undo:
             record = self.lib.get_item(item["id"])
             fields = to_json(record)
             record.remove(delete=False, with_album=False)
-            files = [item["path"]] if delete_file(self.lib, item["path"]) else []
+            files, _ = self.trash.put_all(str(op["id"]), [item["path"]])
             removed.append(self.store.audit(
                 "item.remove", item["target"],
                 Undone(fields, files, op["id"]), caller, op["id"],

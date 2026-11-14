@@ -4,6 +4,8 @@ import sqlite3
 import pytest
 from mediafile import MediaFile
 
+from conftest import restart
+
 PNG = b"\x89PNG\r\n\x1a\n" + b"png data"
 JPEG = b"\xff\xd8\xff\xe0" + b"jpeg data"
 JPEG2 = b"\xff\xd8\xff\xe0" + b"other jpeg"
@@ -31,13 +33,9 @@ def audit(env, **params):
     return env.client.get("/audit", params=params).json()
 
 
-def archived(env, entry):
-    """The bytes of each image an Audit entry says it archived."""
-    with sqlite3.connect(env.client.app.state.store.path) as conn:
-        return [
-            conn.execute("SELECT data FROM art_archive WHERE id = ?", (a["id"],)).fetchone()[0]
-            for a in entry["changes"]["archived"]
-        ]
+def trashed(entry):
+    """The bytes of each image an Audit entry says it moved to the Trash."""
+    return [read(t["to"]) for t in entry["changes"]["trashed_to"]]
 
 
 def album_dir(album):
@@ -94,56 +92,65 @@ def test_upload_does_not_embed_it(env, monkeypatch):
     assert all(not MediaFile(item.path).images for item in env.lib.get_album(album.id).items())
 
 
-# Archiving instead of deleting
+# Moving to the Trash instead of deleting
 
 
-def test_replacing_art_archives_the_old_image(env):
+def test_replacing_art_trashes_the_old_image(env):
     album = env.seed_album()
     first = upload(env, album, JPEG)
     second = upload(env, album, PNG)
 
     old = new_artpath(first)
     assert not os.path.exists(old)
-    [entry] = second["changes"]["archived"]
-    assert (entry["from"], entry["bytes"]) == (old, len(JPEG))
-    assert archived(env, second) == [JPEG]
+    [entry] = second["changes"]["trashed_to"]
+    assert entry["from"] == old and entry["to"].startswith(str(env.trash / "art-album-"))
+    assert trashed(second) == [JPEG]
     assert second["changes"]["artpath"]["old"] == old
 
 
-def test_replacing_art_with_the_same_format_archives_the_old_image(env):
+def test_replacing_art_with_the_same_format_trashes_the_old_image(env):
     album = env.seed_album()
     upload(env, album, JPEG)
     op = upload(env, album, JPEG2)
-    assert archived(env, op) == [JPEG]
+    assert trashed(op) == [JPEG]
     assert read(new_artpath(op)) == JPEG2
 
 
-def test_upload_archives_a_stray_cover_it_would_overwrite(env):
+def test_upload_trashes_a_stray_cover_it_would_overwrite(env):
     album = env.seed_album()
     stray = os.path.join(album_dir(album), "cover.jpg")
     with open(stray, "wb") as f:
         f.write(b"not recorded in beets")
     op = upload(env, album, JPEG)
-    assert archived(env, op) == [b"not recorded in beets"]
+    assert trashed(op) == [b"not recorded in beets"]
 
 
-def test_archive_is_in_the_db_and_append_only(env):
+def test_art_files_are_kept_in_the_trash_not_the_database(env):
     album = env.seed_album()
     upload(env, album, JPEG)
     upload(env, album, PNG)
-    store_dir = os.path.dirname(os.path.abspath(env.client.app.state.store.path))
-    assert not os.path.exists(os.path.join(store_dir, "art-archive"))
     with sqlite3.connect(env.client.app.state.store.path) as conn:
-        assert conn.execute("SELECT album_id FROM art_archive").fetchall() == [(album.id,)]
-        for sql in ("UPDATE art_archive SET data = x''", "DELETE FROM art_archive"):
-            with pytest.raises(sqlite3.IntegrityError, match="append-only"):
-                conn.execute(sql)
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    assert "art_archive" not in tables
+    assert len(list(env.trash.glob("art-album-*/**/*.jpg"))) == 1
+
+
+def test_replacing_art_is_refused_when_the_trash_is_not_configured(env, monkeypatch):
+    album = env.seed_album()
+    upload(env, album, JPEG)
+    monkeypatch.delenv("BEETS_API_TRASH_DIR")
+    restart(env)
+    response = env.client.put(f"/albums/{album.id}/art", content=PNG)
+    assert response.status_code == 409 and "Trash" in response.json()["detail"]
+    assert env.lib.get_album(album.id).artpath.endswith(b"cover.jpg")
+    assert env.client.delete(f"/albums/{album.id}/art").status_code == 409
+    assert not [n for n in os.listdir(album_dir(album)) if n.startswith("tmp")]
 
 
 # Removing
 
 
-def test_remove_clears_art_and_archives_the_file(env):
+def test_remove_clears_art_and_trashes_the_file(env):
     album = env.seed_album()
     artpath = new_artpath(upload(env, album, PNG))
 
@@ -152,7 +159,7 @@ def test_remove_clears_art_and_archives_the_file(env):
     assert (op["action"], op["target"]) == ("art.remove", f"album:{album.id}")
     assert op["changes"]["artpath"] == {"old": artpath, "new": None}
     assert not os.path.exists(artpath)
-    assert archived(env, op) == [PNG]
+    assert trashed(op) == [PNG]
     assert env.lib.get_album(album.id).artpath is None
     assert env.client.get(f"/albums/{album.id}/art").status_code == 404
 
@@ -170,7 +177,7 @@ def test_remove_when_the_file_is_already_missing(env):
     os.remove(artpath)
     op = remove(env, album)
     assert op["changes"] == {
-        "artpath": {"old": artpath, "new": None}, "archived": [], "left_in_place": []
+        "artpath": {"old": artpath, "new": None}, "trashed_to": [], "left_in_place": []
     }
     assert env.lib.get_album(album.id).artpath is None
 
@@ -254,7 +261,7 @@ def test_upload_leaves_old_art_outside_the_music_dir_in_place(env):
     set_artpath(env, album, secret)
     op = upload(env, album, PNG)
     assert read(secret) == JPEG
-    assert op["changes"]["archived"] == []
+    assert op["changes"]["trashed_to"] == []
     assert op["changes"]["left_in_place"] == [secret]
     assert new_artpath(op) == os.path.join(album_dir(album), "cover.png")
 
@@ -265,7 +272,7 @@ def test_remove_clears_art_outside_the_music_dir_without_touching_it(env):
     set_artpath(env, album, secret)
     op = remove(env, album)
     assert op["changes"] == {
-        "artpath": {"old": secret, "new": None}, "archived": [], "left_in_place": [secret]
+        "artpath": {"old": secret, "new": None}, "trashed_to": [], "left_in_place": [secret]
     }
     assert read(secret) == JPEG
     assert env.lib.get_album(album.id).artpath is None

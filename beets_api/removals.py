@@ -1,6 +1,6 @@
-"""Remove with a Preview first: `beet remove -d` split across two HTTP requests.
+"""Remove with a Preview first: `beet remove` split across two HTTP requests.
 
-The music files are always deleted, but only inside the music directory.
+The music files go to the Trash, but only those inside the music directory.
 Anything outside it is left where it is and reported.
 """
 
@@ -11,9 +11,9 @@ from fastapi import HTTPException
 
 from .caller import Caller
 from .changes import Removed
-from .library import delete_file, fingerprint, json_value, to_json
-from .roots import Roots
+from .library import fingerprint, json_value, to_json
 from .store import Store
+from .trash import Trash
 
 log = logging.getLogger(__name__)
 
@@ -60,10 +60,10 @@ def _summary(op: dict) -> dict:
 
 
 class Removals:
-    def __init__(self, lib, store: Store):
+    def __init__(self, lib, store: Store, trash: Trash):
         self.lib = lib
         self.store = store
-        self.music_dir = Roots([lib.directory])
+        self.trash = trash
         # One at a time, like Modifications.
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="remove")
 
@@ -72,7 +72,8 @@ class Removals:
             raise HTTPException(422, "a query is required: an empty one matches the whole Library")
         preview = _build_preview(self.lib, request["scope"] == "album", request["query"])
         status = "awaiting_confirmation" if any(preview.values()) else "no_changes"
-        return self.get(self.store.create(KIND, status, request, {"preview": preview}))
+        result = {"preview": preview, "trash_configured": self.trash.configured}
+        return self.get(self.store.create(KIND, status, request, result))
 
     def get(self, id_: int) -> dict:
         op = self.store.get(id_, KIND)
@@ -108,6 +109,7 @@ class Removals:
         op = self.get(id_)
         if op["status"] != "awaiting_confirmation":
             raise HTTPException(409, f"cannot confirm while {op['status']}")
+        self.trash.require()
         if stale := self._stale(op["result"]["preview"]):
             self._reject(op, stale)
             raise HTTPException(409, {"detail": "library changed since Preview", "stale": stale})
@@ -116,21 +118,11 @@ class Removals:
         self.executor.submit(self._apply, id_, caller)
         return self.get(id_)
 
-    def _delete_files(self, paths: list[str | None]) -> tuple[list[str], list[str]]:
-        """Delete the files inside the music directory; return (deleted, left_in_place)."""
-        deleted, left = [], []
-        for path in filter(None, paths):
-            if not self.music_dir.contains(path):
-                left.append(path)
-            elif delete_file(self.lib, path):
-                deleted.append(path)
-        return deleted, left
-
     def _remove_album(self, entry: dict, id_: int, caller: Caller) -> dict:
         album = self.lib.get_album(entry["id"])
         snapshot = {"album": to_json(album), "items": [to_json(i) for i in album.items()]}
         album.remove(delete=False, with_items=True)
-        files, left = self._delete_files([*(i["path"] for i in entry["items"]), entry["art"]])
+        files, left = self.trash.put_all(str(id_), [*(i["path"] for i in entry["items"]), entry["art"]])
         return self.store.audit(
             "album.remove", f"album:{entry['id']}", Removed(snapshot, files, left), caller, id_
         )
@@ -142,12 +134,12 @@ class Removals:
         art = json_value(album.artpath) if album and album.artpath else None
         snapshot = to_json(item)
         item.remove(delete=False, with_album=True)  # beets drops an Album left empty
-        files, left = self._delete_files([entry["path"]])
+        files, left = self.trash.put_all(str(id_), [entry["path"]])
         self.store.audit(
             "item.remove", f"item:{entry['id']}", Removed(snapshot, files, left), caller, id_
         )
         if album and self.lib.get_album(album.id) is None:
-            files, left = self._delete_files([art])
+            files, left = self.trash.put_all(str(id_), [art])
             self.store.audit(
                 "album.remove", f"album:{album.id}", Removed(album_snapshot, files, left), caller, id_
             )
