@@ -12,6 +12,8 @@ import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime
 
+from .caller import Caller
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS operations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,12 +117,11 @@ class Store:
         action: str,
         target: str,
         changes: dict,
-        client: str | None,
+        by: Caller,
         operation_id: int | None = None,
-        actor: str | None = None,
     ) -> dict:
-        """Append an Audit entry, e.g. ("album.modify", "album:5", {...})."""
-        entry = {"at": _now(), "client": client, "actor": actor, "action": action,
+        """Append an Audit entry made by a Caller, e.g. ("album.modify", "album:5", {...}, who)."""
+        entry = {"at": _now(), "client": by.client, "actor": by.actor, "action": action,
                  "target": target, "operation_id": operation_id, "changes": changes}
         entry["id"] = self._execute(
             "INSERT INTO audit (at, client, actor, action, target, operation_id, changes)"

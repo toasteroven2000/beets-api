@@ -142,7 +142,7 @@ def undo_import(lib, store, op: dict, active: bool, caller: Caller) -> dict:
         removed.append(store.audit(
             "album.remove", album["target"],
             {"removed": fields, "files": files, "undo_of_import": op["id"]},
-            caller.client, op["id"], caller.actor,
+            caller, op["id"],
         ))
     for item in plan["items"]:
         record = lib.get_item(item["id"])
@@ -152,7 +152,7 @@ def undo_import(lib, store, op: dict, active: bool, caller: Caller) -> dict:
         removed.append(store.audit(
             "item.remove", item["target"],
             {"removed": fields, "files": files, "undo_of_import": op["id"]},
-            caller.client, op["id"], caller.actor,
+            caller, op["id"],
         ))
     store.update(op["id"], op["status"], op["result"] | {"undone": {"at": datetime.now(UTC).isoformat()}})
     return plan | {"allowed": False, "undone": True, "audit": removed}

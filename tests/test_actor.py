@@ -2,6 +2,7 @@ import sqlite3
 
 import pytest
 
+from beets_api.caller import Caller
 from beets_api.store import Store
 from conftest import make_album_files
 
@@ -80,7 +81,7 @@ def test_audit_written_before_actors_gets_the_column_with_old_rows_empty(tmp_pat
         )
     store = Store(path)
     Store(path)  # opening it again is harmless
-    store.audit("art.remove", "album:2", {}, "c", actor="tim")
+    store.audit("art.remove", "album:2", {}, Caller("c", "tim"))
     _, rows = store.audit_page(10, 0)
     assert [(r["target"], r["actor"]) for r in rows] == [("album:2", "tim"), ("album:1", None)]
     with pytest.raises(sqlite3.DatabaseError):  # still append-only

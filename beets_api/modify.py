@@ -242,7 +242,7 @@ class Modifications:
             return
         result["applied"].append(ref | ({"path": path} if path else {}))
         model = kind.removesuffix("s")  # "albums" -> "album"
-        self.store.audit(f"{model}.modify", f"{model}:{entry['id']}", entry["changes"], caller.client, id_, caller.actor)
+        self.store.audit(f"{model}.modify", f"{model}:{entry['id']}", entry["changes"], caller, id_)
 
     def _apply(self, id_: int, caller: Caller) -> None:
         with self.lib.music_dir_context():

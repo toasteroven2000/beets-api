@@ -214,14 +214,14 @@ class ApiImportSession(ImportSession):
             changes["path"] = json_value(task.item.path)
         model = target.split(":")[0]
         actor = self.actors.get(id(task), self.actor)
-        self.store.audit(f"{model}.import", target, changes, self.client, self.op_id, actor)
+        self.store.audit(f"{model}.import", target, changes, Caller(self.client, actor), self.op_id)
         # Only the "remove" Choice deletes the duplicates from the Library.
         if getattr(task, "api_removed_duplicates", None):
             for dup in task.api_removed_duplicates:
                 self.store.audit(
                     f"{dup['model']}.remove", f"{dup['model']}:{dup['id']}",
                     {"removed": dup["fields"], "replaced_by": target},
-                    self.client, self.op_id, dup["actor"],
+                    Caller(self.client, dup["actor"]), self.op_id,
                 )
 
     def choose_match(self, task):
