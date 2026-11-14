@@ -41,8 +41,18 @@ Approving a whole Preview so its changes get applied.
 _Avoid_: Approve, commit
 
 **Removal**:
-One requested removal of the Items or Albums matched by a query, equivalent to `beet remove -d`: its Preview, then Confirm, which deletes the files too. Files outside the music directory are never deleted.
-_Avoid_: Delete, purge
+One requested removal of the Items or Albums matched by a query, like `beet remove`: its Preview, then Confirm, which moves their files to the Trash. Files outside the music directory are never moved.
+_Avoid_: Delete
+
+### Trash
+
+**Trash**:
+The directory named by `BEETS_API_TRASH_DIR` that files are moved into instead of being deleted, one folder per operation. Nothing leaves the Library's files by any other route, so while it is unset every action that would delete a file is refused.
+_Avoid_: Deleted, Bin, Archive, Recycle bin
+
+**Purge**:
+Deleting Trash folders for good, after a Preview and a Confirm like a Modification's. The only step that cannot be undone.
+_Avoid_: Empty, clean up
 
 ### Importing
 
@@ -69,7 +79,7 @@ _Avoid_: Decision, answer
 ### Audit
 
 **Audit**:
-The append-only record of every change the API made to the Library. Previews, rejected Modifications and skipped Import Tasks change nothing, so they are not in it.
+The append-only record of every change the API made to the Library or its Trash. Previews, rejected Modifications and skipped Import Tasks change nothing, so they are not in it.
 _Avoid_: History, log, revisions
 
 **Audit entry**:

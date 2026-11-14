@@ -23,6 +23,7 @@
   env.BEETS_WEB_URL = "http://127.0.0.1:8337";
   # Keeps development away from the default library in ~/.config/beets.
   env.BEETSDIR = "${config.devenv.root}/db/foobar";
+  env.BEETS_API_TRASH_DIR = "${config.devenv.root}/db/trash";
 
   # Extra arguments go to uvicorn, e.g. `serve --reload` or `serve --port 9000`.
   scripts.serve.exec = ''
