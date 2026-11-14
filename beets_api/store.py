@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS operations (
 
 CREATE TABLE IF NOT EXISTS audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    at TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
     client TEXT,
     actor TEXT,
     action TEXT NOT NULL,
@@ -119,12 +119,12 @@ class Store:
     ) -> dict:
         """Append an Audit entry made by a Caller, e.g. ("album.modify", "album:5", {...}, who)."""
         changes = asdict(changes) if is_dataclass(changes) else changes
-        entry = {"at": _now(), "client": by.client, "actor": by.actor, "action": action,
+        entry = {"recorded_at": _now(), "client": by.client, "actor": by.actor, "action": action,
                  "target": target, "operation_id": operation_id, "changes": changes}
         entry["id"] = self._execute(
-            "INSERT INTO audit (at, client, actor, action, target, operation_id, changes)"
+            "INSERT INTO audit (recorded_at, client, actor, action, target, operation_id, changes)"
             " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            *(entry[k] for k in ("at", "client", "actor", "action", "target", "operation_id")),
+            *(entry[k] for k in ("recorded_at", "client", "actor", "action", "target", "operation_id")),
             json.dumps(changes),
         ).lastrowid
         return entry

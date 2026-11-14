@@ -119,7 +119,7 @@ class Undo:
                 + ", ".join(e["target"] for e in replaced)
             )
         changed_since = [
-            {k: e[k] for k in ("id", "at", "action", "target")}
+            {k: e[k] for k in ("id", "recorded_at", "action", "target")}
             for e in self.store.audit_entries(targets=[e["target"] for e in made])
             if not _is_import_of(e, id_)
         ]
