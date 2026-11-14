@@ -389,7 +389,7 @@ def test_undo_removes_albums_items_and_copied_files_and_keeps_the_originals(env,
     id_ = imported(env, source)
     paths = [i.path for i in env.lib.items()]
     folder = os.path.dirname(paths[0])
-    done = env.client.post(undo_url(id_), headers={"X-Client": "beets-ui"})
+    done = env.client.post(undo_url(id_), headers={"X-Beets-API-Client": "beets-ui"})
     assert done.status_code == 200, done.text
     assert len(env.lib.items()) == 0 and len(env.lib.albums()) == 0
     assert not any(os.path.exists(p) for p in paths)

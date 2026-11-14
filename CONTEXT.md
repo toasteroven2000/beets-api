@@ -73,7 +73,7 @@ One change to one Album or Item (including its art): when, by which Client and A
 _Avoid_: Event, revision
 
 **Client**:
-The program making a request, named by the caller in the `X-Beets-API-Client` header (`X-Client` before it was prefixed). Without authentication it is a label, not proof.
+The program making a request, named by the caller in the `X-Beets-API-Client` header. Without authentication it is a label, not proof.
 _Avoid_: User, caller
 
 **Actor**:

@@ -10,14 +10,14 @@ JPEG2 = b"\xff\xd8\xff\xe0" + b"other jpeg"
 
 
 def upload(env, album, data, client=None):
-    headers = {"X-Client": client} if client else {}
+    headers = {"X-Beets-API-Client": client} if client else {}
     response = env.client.put(f"/albums/{album.id}/art", content=data, headers=headers)
     assert response.status_code == 200, response.text
     return response.json()
 
 
 def remove(env, album, client=None):
-    headers = {"X-Client": client} if client else {}
+    headers = {"X-Beets-API-Client": client} if client else {}
     response = env.client.delete(f"/albums/{album.id}/art", headers=headers)
     assert response.status_code == 200, response.text
     return response.json()

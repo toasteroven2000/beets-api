@@ -26,7 +26,7 @@ def test_confirmed_modification_audits_each_changed_object(env):
     op = env.preview(scope="album", query="", set={"albumdisambig": "new"})
     assert audit(env)["total"] == 0  # a Preview changes nothing
 
-    response = env.client.post(f"/modifications/{op['id']}/confirm", headers={"X-Client": "ui"})
+    response = env.client.post(f"/modifications/{op['id']}/confirm", headers={"X-Beets-API-Client": "ui"})
     assert response.status_code == 202
     env.wait(f"/modifications/{op['id']}", "applied")
 
@@ -54,7 +54,7 @@ def test_rejected_modification_is_not_audited(env):
 
 
 def test_import_audits_each_imported_album(env, source):
-    response = env.client.post("/imports", json={"paths": [source]}, headers={"X-Client": "ui"})
+    response = env.client.post("/imports", json={"paths": [source]}, headers={"X-Beets-API-Client": "ui"})
     id_ = response.json()["id"]
     choose(env, id_, "asis")
     assert finish(env, id_)["status"] == "completed"
