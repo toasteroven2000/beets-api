@@ -19,7 +19,7 @@ from .caller import Caller
 from .roots import Roots
 from .library import forget_cached_paths, json_value, to_json
 from .store import Store
-from .undo import import_mode, plan_undo, undo_import
+from .undo import Undo, import_mode
 
 log = logging.getLogger(__name__)
 
@@ -313,6 +313,7 @@ class Imports:
         self.lib = lib
         self.store = store
         self.roots = roots
+        self.undoer = Undo(lib, store)
         self.lock = threading.Lock()
         self.sessions: dict[str, ApiImportSession] = {}
         self.active: ApiImportSession | None = None
@@ -389,13 +390,11 @@ class Imports:
 
     def undo_preview(self, id_: int) -> dict:
         """What undoing the Import would remove, and whether it may. Changes nothing."""
-        return plan_undo(self.lib, self.store, self.get(id_), self._is_active(id_))
+        return self.undoer.plan(self.get(id_), self._is_active(id_))
 
     def undo(self, id_: int, caller: Caller = Caller()) -> dict:
         with self.lock:  # no Import starts, nor another undo runs, meanwhile
-            return undo_import(
-                self.lib, self.store, self.get(id_), self._is_active(id_), caller
-            )
+            return self.undoer.run(self.get(id_), self._is_active(id_), caller)
 
     def _is_active(self, id_: int) -> bool:
         return self.active is not None and self.active.op_id == id_

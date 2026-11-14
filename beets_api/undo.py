@@ -48,9 +48,9 @@ def _is_import_of(entry: dict, id_: int) -> bool:
     return entry["action"] in IMPORT_ACTIONS and entry["operation_id"] == id_
 
 
-def _created(entries: list[dict], lib, reasons: list[str]) -> tuple[list[dict], list[dict]]:
-    """The Albums and Items the Import added that are still in the Library."""
-    albums, items = [], []
+def _created(entries: list[dict], lib) -> tuple[list[dict], list[dict], list[str]]:
+    """The Albums and Items the Import added that are still in the Library, and what has changed about them."""
+    albums, items, reasons = [], [], []
     for entry in entries:
         model, _, raw = entry["target"].partition(":")
         id_ = int(raw)
@@ -76,48 +76,7 @@ def _created(entries: list[dict], lib, reasons: list[str]) -> tuple[list[dict], 
                 reasons.append(f"the file of {entry['target']} is no longer where the Import put it")
             items.append({"target": entry["target"], "id": id_, "artist": item.artist,
                           "title": item.title, "path": json_value(item.path)})
-    return albums, items
-
-
-def plan_undo(lib, store, op: dict, active: bool) -> dict:
-    """What undoing this Import would do, and why it may not. Changes nothing."""
-    id_ = op["id"]
-    reasons = []
-    if active or op["status"] in ("running", "waiting_for_choice"):
-        reasons.append("the Import is still active")
-    mode = op["result"].get("mode")
-    if mode != COPY:
-        reasons.append(MODE_REASONS[mode if mode in MODE_REASONS else None])
-    if op["result"].get("undone"):
-        reasons.append("this Import was already undone")
-
-    entries = store.audit_entries(operation_id=id_)
-    made = [e for e in entries if e["action"] in IMPORT_ACTIONS]
-    replaced = [e for e in entries if e["action"].endswith(".remove") and "undo_of_import" not in e["changes"]]
-    if replaced:
-        reasons.append(
-            f"the Import replaced {len(replaced)} existing "
-            f"{'record' if len(replaced) == 1 else 'records'} whose files were deleted: "
-            + ", ".join(e["target"] for e in replaced)
-        )
-    changed_since = [
-        {k: e[k] for k in ("id", "at", "action", "target")}
-        for e in store.audit_entries(targets=[e["target"] for e in made])
-        if not _is_import_of(e, id_)
-    ]
-    if changed_since:
-        reasons.append(f"{len(changed_since)} later changes were made to what the Import added")
-
-    albums, items = _created(made, lib, reasons)
-    music_dir = Roots([lib.directory])
-    files = [p for a in albums for p in (*(i["path"] for i in a["items"]), a["art"]) if p]
-    files += [i["path"] for i in items]
-    if outside := [p for p in files if not music_dir.contains(p)]:
-        reasons.append(f"files are outside the music directory: {outside}")
-    return {
-        "import_id": id_, "mode": mode, "allowed": not reasons, "reasons": reasons,
-        "albums": albums, "items": items, "changes_since": changed_since,
-    }
+    return albums, items, reasons
 
 
 def _delete(lib, path: str | None) -> bool:
@@ -128,31 +87,81 @@ def _delete(lib, path: str | None) -> bool:
     return True
 
 
-def undo_import(lib, store, op: dict, active: bool, caller: Caller) -> dict:
-    """Remove what the Import added, then its files, auditing each as it goes."""
-    plan = plan_undo(lib, store, op, active)
-    if not plan["allowed"]:
-        raise HTTPException(409, "cannot undo this Import: " + "; ".join(plan["reasons"]))
-    removed = []
-    for album in plan["albums"]:
-        record = lib.get_album(album["id"])
-        fields = {"album": to_json(record), "items": [to_json(i) for i in record.items()]}
-        record.remove(delete=False, with_items=True)  # the files are deleted below, from the Audit's paths
-        files = [p for p in (*(i["path"] for i in album["items"]), album["art"]) if _delete(lib, p)]
-        removed.append(store.audit(
-            "album.remove", album["target"],
-            {"removed": fields, "files": files, "undo_of_import": op["id"]},
-            caller, op["id"],
-        ))
-    for item in plan["items"]:
-        record = lib.get_item(item["id"])
-        fields = to_json(record)
-        record.remove(delete=False, with_album=False)
-        files = [item["path"]] if _delete(lib, item["path"]) else []
-        removed.append(store.audit(
-            "item.remove", item["target"],
-            {"removed": fields, "files": files, "undo_of_import": op["id"]},
-            caller, op["id"],
-        ))
-    store.update(op["id"], op["status"], op["result"] | {"undone": {"at": datetime.now(UTC).isoformat()}})
-    return plan | {"allowed": False, "undone": True, "audit": removed}
+class Undo:
+    """Undoes Imports against a Library, working from the Store's Audit."""
+
+    def __init__(self, lib, store):
+        self.lib = lib
+        self.store = store
+        self.music_dir = Roots([lib.directory])
+
+    def plan(self, op: dict, active: bool) -> dict:
+        """What undoing this Import would do, and why it may not. Changes nothing."""
+        id_ = op["id"]
+        reasons = []
+        if active or op["status"] in ("running", "waiting_for_choice"):
+            reasons.append("the Import is still active")
+        mode = op["result"].get("mode")
+        if mode != COPY:
+            reasons.append(MODE_REASONS[mode if mode in MODE_REASONS else None])
+        if op["result"].get("undone"):
+            reasons.append("this Import was already undone")
+
+        entries = self.store.audit_entries(operation_id=id_)
+        made = [e for e in entries if e["action"] in IMPORT_ACTIONS]
+        replaced = [
+            e for e in entries if e["action"].endswith(".remove") and "undo_of_import" not in e["changes"]
+        ]
+        if replaced:
+            reasons.append(
+                f"the Import replaced {len(replaced)} existing "
+                f"{'record' if len(replaced) == 1 else 'records'} whose files were deleted: "
+                + ", ".join(e["target"] for e in replaced)
+            )
+        changed_since = [
+            {k: e[k] for k in ("id", "at", "action", "target")}
+            for e in self.store.audit_entries(targets=[e["target"] for e in made])
+            if not _is_import_of(e, id_)
+        ]
+        if changed_since:
+            reasons.append(f"{len(changed_since)} later changes were made to what the Import added")
+
+        albums, items, why = _created(made, self.lib)
+        reasons += why
+        files = [p for a in albums for p in (*(i["path"] for i in a["items"]), a["art"]) if p]
+        files += [i["path"] for i in items]
+        if outside := [p for p in files if not self.music_dir.contains(p)]:
+            reasons.append(f"files are outside the music directory: {outside}")
+        return {
+            "import_id": id_, "mode": mode, "allowed": not reasons, "reasons": reasons,
+            "albums": albums, "items": items, "changes_since": changed_since,
+        }
+
+    def run(self, op: dict, active: bool, caller: Caller) -> dict:
+        """Remove what the Import added, then its files, auditing each as it goes."""
+        plan = self.plan(op, active)
+        if not plan["allowed"]:
+            raise HTTPException(409, "cannot undo this Import: " + "; ".join(plan["reasons"]))
+        removed = []
+        for album in plan["albums"]:
+            record = self.lib.get_album(album["id"])
+            fields = {"album": to_json(record), "items": [to_json(i) for i in record.items()]}
+            record.remove(delete=False, with_items=True)  # the files are deleted below, from the Audit's paths
+            files = [p for p in (*(i["path"] for i in album["items"]), album["art"]) if _delete(self.lib, p)]
+            removed.append(self.store.audit(
+                "album.remove", album["target"],
+                {"removed": fields, "files": files, "undo_of_import": op["id"]}, caller, op["id"],
+            ))
+        for item in plan["items"]:
+            record = self.lib.get_item(item["id"])
+            fields = to_json(record)
+            record.remove(delete=False, with_album=False)
+            files = [item["path"]] if _delete(self.lib, item["path"]) else []
+            removed.append(self.store.audit(
+                "item.remove", item["target"],
+                {"removed": fields, "files": files, "undo_of_import": op["id"]}, caller, op["id"],
+            ))
+        self.store.update(
+            op["id"], op["status"], op["result"] | {"undone": {"at": datetime.now(UTC).isoformat()}}
+        )
+        return plan | {"allowed": False, "undone": True, "audit": removed}
