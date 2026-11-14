@@ -1,9 +1,5 @@
-import sqlite3
-
 import pytest
 
-from beets_api.caller import Caller
-from beets_api.store import Store
 from conftest import make_album_files
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 20
@@ -69,24 +65,6 @@ def test_audit_filters_by_actor(env):
     env.client.delete(f"/albums/{album.id}/art", headers=as_("bob"))
     assert [e["action"] for e in entries(env, actor="alice")] == ["art.upload"]
     assert entries(env, actor="nobody") == []
-
-
-def test_audit_written_before_actors_gets_the_column_with_old_rows_empty(tmp_path):
-    path = str(tmp_path / "old.db")
-    with sqlite3.connect(path) as conn:
-        conn.executescript(
-            "CREATE TABLE audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, client TEXT,"
-            " action TEXT NOT NULL, target TEXT NOT NULL, operation_id INTEGER, changes TEXT NOT NULL);"
-            "INSERT INTO audit (at, client, action, target, changes) VALUES ('t', 'c', 'album.modify', 'album:1', '{}');"
-        )
-    store = Store(path)
-    Store(path)  # opening it again is harmless
-    store.audit("art.remove", "album:2", {}, Caller("c", "alex"))
-    _, rows = store.audit_page(10, 0)
-    assert [(r["target"], r["actor"]) for r in rows] == [("album:2", "alex"), ("album:1", None)]
-    with pytest.raises(sqlite3.DatabaseError):  # still append-only
-        with sqlite3.connect(path) as conn:
-            conn.execute("UPDATE audit SET actor = 'x'")
 
 
 # ---- Imports: each Choice has its own Actor ----

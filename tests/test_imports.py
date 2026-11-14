@@ -447,15 +447,6 @@ def test_undo_is_refused_unless_the_files_were_copied(env, source, settings, rea
     assert len(env.lib.items()) == 2
 
 
-def test_undo_is_refused_for_an_import_with_no_recorded_mode(env, source):
-    id_ = imported(env, source)
-    op = env.client.app.state.store.get(id_, "import")
-    del op["result"]["mode"]
-    env.client.app.state.store.update(id_, op["status"], op["result"])
-    refused = env.client.post(undo_url(id_))
-    assert refused.status_code == 409 and "did not record" in refused.json()["detail"]
-
-
 def test_undo_is_refused_when_the_import_replaced_a_duplicate(env, source):
     imported(env, source)
     second = start(env, source)

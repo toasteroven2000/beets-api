@@ -29,7 +29,6 @@ MODE_REASONS = {
     "copy_delete": "the Import deleted the originals after copying them",
     "link": "the Import linked its files; only a plain copy can be undone",
     "in_place": "the Import added its files where they were, so undoing would delete the originals",
-    None: "this Import did not record whether it copied its files (it ran before that was kept)",
 }
 IMPORT_ACTIONS = ("album.import", "item.import")
 
@@ -102,9 +101,9 @@ class Undo:
         reasons = []
         if active or op["status"] in ("running", "waiting_for_choice"):
             reasons.append("the Import is still active")
-        mode = op["result"].get("mode")
+        mode = op["result"]["mode"]
         if mode != COPY:
-            reasons.append(MODE_REASONS[mode if mode in MODE_REASONS else None])
+            reasons.append(MODE_REASONS[mode])
         if op["result"].get("undone"):
             reasons.append("this Import was already undone")
 

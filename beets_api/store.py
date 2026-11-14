@@ -70,10 +70,6 @@ class Store:
         self.path = path
         with closing(sqlite3.connect(self.path)) as conn:
             conn.executescript(SCHEMA)
-            # Audits written before Actors existed have none. Adding a column is
-            # not an UPDATE, so the append-only triggers allow it.
-            if "actor" not in {r[1] for r in conn.execute("PRAGMA table_info(audit)")}:
-                conn.execute("ALTER TABLE audit ADD COLUMN actor TEXT")
 
     def _execute(self, sql: str, *params) -> sqlite3.Cursor:
         with closing(sqlite3.connect(self.path)) as conn, conn:
