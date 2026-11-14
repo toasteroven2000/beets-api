@@ -10,6 +10,7 @@ UPDATE or DELETE on either.
 import json
 import sqlite3
 from contextlib import closing
+from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 
 from .caller import Caller
@@ -116,11 +117,12 @@ class Store:
         self,
         action: str,
         target: str,
-        changes: dict,
+        changes,
         by: Caller,
         operation_id: int | None = None,
     ) -> dict:
         """Append an Audit entry made by a Caller, e.g. ("album.modify", "album:5", {...}, who)."""
+        changes = asdict(changes) if is_dataclass(changes) else changes
         entry = {"at": _now(), "client": by.client, "actor": by.actor, "action": action,
                  "target": target, "operation_id": operation_id, "changes": changes}
         entry["id"] = self._execute(

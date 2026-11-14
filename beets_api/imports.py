@@ -16,6 +16,7 @@ from beets.importer import Action, DuplicateAction, ImportAbortError, ImportSess
 from fastapi import HTTPException
 
 from .caller import Caller
+from .changes import AlbumImport, ItemImport, Replaced
 from .roots import Roots
 from .library import forget_cached_paths, json_value, to_json
 from .store import Store
@@ -205,13 +206,13 @@ class ApiImportSession(ImportSession):
              "id": task.match.info.get("album_id" if task.is_album else "track_id")}
             if task.match and task.choice_flag is Action.APPLY else "asis"
         )
-        changes = {"source": _paths(task.paths), "match": match}
+        source = _paths(task.paths)
         if task.is_album:
             target = f"album:{task.album.id}"
-            changes["items"] = [to_json(i, ["id", "path"]) for i in task.imported_items()]
+            changes = AlbumImport(source, match, [to_json(i, ["id", "path"]) for i in task.imported_items()])
         else:
             target = f"item:{task.item.id}"
-            changes["path"] = json_value(task.item.path)
+            changes = ItemImport(source, match, json_value(task.item.path))
         model = target.split(":")[0]
         actor = self.actors.get(id(task), self.actor)
         self.store.audit(f"{model}.import", target, changes, Caller(self.client, actor), self.op_id)
@@ -220,7 +221,7 @@ class ApiImportSession(ImportSession):
             for dup in task.api_removed_duplicates:
                 self.store.audit(
                     f"{dup['model']}.remove", f"{dup['model']}:{dup['id']}",
-                    {"removed": dup["fields"], "replaced_by": target},
+                    Replaced(dup["fields"], target),
                     Caller(self.client, dup["actor"]), self.op_id,
                 )
 

@@ -19,6 +19,7 @@ from beets import util
 from fastapi import HTTPException
 
 from .caller import Caller
+from .changes import AlbumImport, ItemImport, Undone
 from .library import json_value, to_json
 from .roots import Roots
 
@@ -57,7 +58,7 @@ def _created(entries: list[dict], lib) -> tuple[list[dict], list[dict], list[str
         if model == "album":
             if (album := lib.get_album(id_)) is None:
                 continue  # removed since; there is nothing left to undo
-            recorded = {i["id"]: i["path"] for i in entry["changes"]["items"]}
+            recorded = {i["id"]: i["path"] for i in AlbumImport(**entry["changes"]).items}
             present = {i.id: json_value(i.path) for i in album.items()}
             if moved := [p for i, p in recorded.items() if i in present and present[i] != p]:
                 reasons.append(f"files of {entry['target']} are no longer where the Import put them: {moved}")
@@ -72,7 +73,7 @@ def _created(entries: list[dict], lib) -> tuple[list[dict], list[dict], list[str
         else:
             if (item := lib.get_item(id_)) is None:
                 continue
-            if json_value(item.path) != entry["changes"]["path"]:
+            if json_value(item.path) != ItemImport(**entry["changes"]).path:
                 reasons.append(f"the file of {entry['target']} is no longer where the Import put it")
             items.append({"target": entry["target"], "id": id_, "artist": item.artist,
                           "title": item.title, "path": json_value(item.path)})
@@ -110,7 +111,7 @@ class Undo:
         entries = self.store.audit_entries(operation_id=id_)
         made = [e for e in entries if e["action"] in IMPORT_ACTIONS]
         replaced = [
-            e for e in entries if e["action"].endswith(".remove") and "undo_of_import" not in e["changes"]
+            e for e in entries if e["action"].endswith(".remove") and "replaced_by" in e["changes"]
         ]
         if replaced:
             reasons.append(
@@ -150,7 +151,7 @@ class Undo:
             files = [p for p in (*(i["path"] for i in album["items"]), album["art"]) if _delete(self.lib, p)]
             removed.append(self.store.audit(
                 "album.remove", album["target"],
-                {"removed": fields, "files": files, "undo_of_import": op["id"]}, caller, op["id"],
+                Undone(fields, files, op["id"]), caller, op["id"],
             ))
         for item in plan["items"]:
             record = self.lib.get_item(item["id"])
@@ -159,7 +160,7 @@ class Undo:
             files = [item["path"]] if _delete(self.lib, item["path"]) else []
             removed.append(self.store.audit(
                 "item.remove", item["target"],
-                {"removed": fields, "files": files, "undo_of_import": op["id"]}, caller, op["id"],
+                Undone(fields, files, op["id"]), caller, op["id"],
             ))
         self.store.update(
             op["id"], op["status"], op["result"] | {"undone": {"at": datetime.now(UTC).isoformat()}}

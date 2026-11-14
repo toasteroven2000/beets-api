@@ -15,6 +15,7 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from .caller import Caller
+from .changes import ArtRemoval, ArtUpload, OldNew
 from .library import json_value
 from .roots import Roots
 from .store import Store
@@ -97,13 +98,9 @@ class AlbumArt:
             os.replace(f.name, dest)
             album.artpath = dest
             album.store()
-            changes = {
-                "artpath": {"old": json_value(old), "new": json_value(dest)},
-                "format": extension[1:],
-                "bytes": len(data),
-                "archived": archived,
-                "left_in_place": left,
-            }
+            changes = ArtUpload(
+                OldNew(json_value(old), json_value(dest)), extension[1:], len(data), archived, left
+            )
             return self.store.audit(
                 "art.upload", f"album:{album_id}", changes, caller
             )
@@ -117,11 +114,7 @@ class AlbumArt:
             archived, left = self._set_aside(album_id, (old,))
             album.artpath = None
             album.store()
-            changes = {
-                "artpath": {"old": json_value(old), "new": None},
-                "archived": archived,
-                "left_in_place": left,
-            }
+            changes = ArtRemoval(OldNew(json_value(old), None), archived, left)
             return self.store.audit(
                 "art.remove", f"album:{album_id}", changes, caller
             )
