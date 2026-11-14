@@ -54,6 +54,13 @@ class Replaced:  # album.remove / item.remove, by an Import replacing duplicates
 
 
 @dataclass(frozen=True)
+class Removed:  # album.remove / item.remove, by a Removal
+    removed: dict
+    files: list[str]
+    left_in_place: list[str]  # files outside the music directory, never deleted
+
+
+@dataclass(frozen=True)
 class Undone:  # album.remove / item.remove, by undoing an Import
     removed: dict
     files: list[str]

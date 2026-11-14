@@ -12,15 +12,13 @@ Item an Import made and where its files went. It only ever acts when that is saf
 Only paths the Audit names are deleted, and only inside the music directory.
 """
 
-import os
 from datetime import UTC, datetime
 
-from beets import util
 from fastapi import HTTPException
 
 from .caller import Caller
 from .changes import AlbumImport, ItemImport, Undone
-from .library import json_value, to_json
+from .library import delete_file, json_value, to_json
 from .roots import Roots
 
 COPY = "copy"
@@ -77,14 +75,6 @@ def _created(entries: list[dict], lib) -> tuple[list[dict], list[dict], list[str
             items.append({"target": entry["target"], "id": id_, "artist": item.artist,
                           "title": item.title, "path": json_value(item.path)})
     return albums, items, reasons
-
-
-def _delete(lib, path: str | None) -> bool:
-    if not path or not os.path.isfile(path):
-        return False
-    os.remove(path)
-    util.prune_dirs(os.path.dirname(os.fsencode(path)), root=lib.directory)
-    return True
 
 
 class Undo:
@@ -147,7 +137,7 @@ class Undo:
             record = self.lib.get_album(album["id"])
             fields = {"album": to_json(record), "items": [to_json(i) for i in record.items()]}
             record.remove(delete=False, with_items=True)  # the files are deleted below, from the Audit's paths
-            files = [p for p in (*(i["path"] for i in album["items"]), album["art"]) if _delete(self.lib, p)]
+            files = [p for p in (*(i["path"] for i in album["items"]), album["art"]) if delete_file(self.lib, p)]
             removed.append(self.store.audit(
                 "album.remove", album["target"],
                 Undone(fields, files, op["id"]), caller, op["id"],
@@ -156,7 +146,7 @@ class Undo:
             record = self.lib.get_item(item["id"])
             fields = to_json(record)
             record.remove(delete=False, with_album=False)
-            files = [item["path"]] if _delete(self.lib, item["path"]) else []
+            files = [item["path"]] if delete_file(self.lib, item["path"]) else []
             removed.append(self.store.audit(
                 "item.remove", item["target"],
                 Undone(fields, files, op["id"]), caller, op["id"],

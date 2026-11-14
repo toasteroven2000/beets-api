@@ -40,6 +40,10 @@ _Avoid_: Diff, pretend, dry run
 Approving a whole Preview so its changes get applied.
 _Avoid_: Approve, commit
 
+**Removal**:
+One requested removal of the Items or Albums matched by a query, equivalent to `beet remove -d`: its Preview, then Confirm, which deletes the files too. Files outside the music directory are never deleted.
+_Avoid_: Delete, purge
+
 ### Importing
 
 **Import**:

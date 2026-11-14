@@ -22,6 +22,7 @@ from .imports import Imports
 from .art import AlbumArt
 from .library import default_store_path, open_library, to_json
 from .modify import Modifications
+from .removals import Removals
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -41,6 +42,11 @@ class ModificationRequest(BaseModel):
     query: str
     set: dict[str, str] = Field(default_factory=dict)
     delete: list[str] = Field(default_factory=list)
+
+
+class RemovalRequest(BaseModel):
+    scope: Literal["item", "album"]
+    query: str
 
 
 class ImportRequest(BaseModel):
@@ -77,6 +83,7 @@ def create_app() -> FastAPI:
     store = Store(store_path)
     store.mark_interrupted(("queued", "applying", "running", "waiting_for_choice"))
     modifications = Modifications(lib, store)
+    removals = Removals(lib, store)
     roots = import_roots(os.environ.get("BEETS_API_IMPORT_PATHS"))
     if roots is None:
         log.warning("BEETS_API_IMPORT_PATHS is unset: imports may read any path")
@@ -189,6 +196,27 @@ def create_app() -> FastAPI:
     @app.post("/modifications/{id_}/confirm", status_code=202)
     def confirm_modification(id_: int, who: Annotated[Caller, Depends(caller)]):
         return modifications.confirm(id_, who)
+
+    @app.post("/removals", status_code=201)
+    def create_removal(body: RemovalRequest):
+        """Preview removing what a query matches, and deleting its files. Confirm applies it."""
+        return removals.create(body.model_dump())
+
+    @app.get("/removals")
+    def list_removals(
+        status: Annotated[list[str], Query()] = [],
+        limit: Annotated[int, Query(ge=1)] = 50,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ):
+        return removals.page(status, limit, offset)
+
+    @app.get("/removals/{id_}")
+    def get_removal(id_: int):
+        return removals.get(id_)
+
+    @app.post("/removals/{id_}/confirm", status_code=202)
+    def confirm_removal(id_: int, who: Annotated[Caller, Depends(caller)]):
+        return removals.confirm(id_, who)
 
     @app.get("/import-paths")
     def get_import_paths(path: str | None = None):
