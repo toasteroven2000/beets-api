@@ -16,7 +16,7 @@ from beets.importer import Action, DuplicateAction, ImportAbortError, ImportSess
 from fastapi import HTTPException
 
 from .caller import Caller
-from .import_paths import inside
+from .roots import Roots
 from .library import forget_cached_paths, json_value, to_json
 from .store import Store
 from .undo import import_mode, plan_undo, undo_import
@@ -309,7 +309,7 @@ class ApiImportSession(ImportSession):
 
 
 class Imports:
-    def __init__(self, lib, store: Store, roots: list[str] | None = None):
+    def __init__(self, lib, store: Store, roots: Roots | None = None):
         self.lib = lib
         self.store = store
         self.roots = roots
@@ -324,7 +324,7 @@ class Imports:
         if missing := [p for p in paths if not os.path.exists(p)]:
             raise HTTPException(422, f"paths do not exist: {missing}")
         if self.roots is not None and (
-            outside := [p for p in paths if not inside(p, self.roots)]
+            outside := [p for p in paths if not self.roots.contains(p)]
         ):
             raise HTTPException(403, f"paths are outside BEETS_API_IMPORT_PATHS: {outside}")
         with self.lock:

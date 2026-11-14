@@ -16,6 +16,7 @@ from fastapi import HTTPException
 
 from .caller import Caller
 from .library import json_value
+from .roots import Roots
 from .store import Store
 
 MAX_BYTES = 20 * 1024 * 1024
@@ -34,22 +35,18 @@ class AlbumArt:
         self.store = store
         # One change at a time, so two uploads can't archive the same file.
         self.lock = threading.Lock()
+        self.music_dir = Roots([lib.directory])
 
     def _album(self, album_id: int):
         if (album := self.lib.get_album(album_id)) is None:
             raise HTTPException(404, "album not found")
         return album
 
-    def _in_music_dir(self, path: bytes) -> bool:
-        """Compared after resolving symlinks, so a link can't point outside."""
-        root = os.path.realpath(self.lib.directory)
-        return os.path.commonpath([root, os.path.realpath(path)]) == root
-
     def file(self, album_id: int) -> Path:
         album = self._album(album_id)
         if (path := album.art_filepath) is None:
             raise HTTPException(404, "album has no art")
-        if not self._in_music_dir(album.artpath):
+        if not self.music_dir.contains(album.artpath):
             raise HTTPException(403, "album art is outside the music directory")
         if not path.is_file():
             raise HTTPException(404, "album art file is missing")
@@ -59,7 +56,7 @@ class AlbumArt:
         """Archive files inside the music directory; leave any others untouched."""
         archived, left = [], []
         for path in dict.fromkeys(filter(None, paths)):
-            if not self._in_music_dir(path):
+            if not self.music_dir.contains(path):
                 left.append(json_value(path))
             elif entry := self._archive(album_id, path):
                 archived.append(entry)
@@ -90,7 +87,7 @@ class AlbumArt:
             album = self._album(album_id)
             old = album.artpath
             directory = album.item_dir()
-            if not self._in_music_dir(directory):
+            if not self.music_dir.contains(directory):
                 raise HTTPException(403, "album is outside the music directory")
             dest = os.path.join(directory, b"cover" + extension.encode())
             with tempfile.NamedTemporaryFile(dir=directory, delete=False) as f:
