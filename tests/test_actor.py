@@ -42,11 +42,10 @@ def test_without_headers_there_is_no_actor_or_client(env):
     assert entry["actor"] is None and entry["client"] is None
 
 
-def test_the_old_client_header_still_works_and_the_new_one_wins(env):
+def test_the_unprefixed_client_header_is_ignored(env):
     album = env.seed_album()
     env.client.put(f"/albums/{album.id}/art", content=PNG, headers={"X-Client": "old"})
-    env.client.put(f"/albums/{album.id}/art", content=PNG, headers={"X-Client": "old", "X-Beets-API-Client": "new"})
-    assert [e["client"] for e in entries(env)] == ["new", "old"]
+    assert entries(env)[0]["client"] is None
 
 
 def test_actor_is_trimmed_and_refused_when_unsafe(env):

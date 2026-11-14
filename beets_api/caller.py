@@ -33,6 +33,5 @@ def clean_actor(value: str | None) -> str | None:
 def caller(
     x_beets_api_client: Annotated[str | None, Header()] = None,
     x_beets_api_actor: Annotated[str | None, Header()] = None,
-    x_client: Annotated[str | None, Header()] = None,  # the name before the prefix; still accepted
 ) -> Caller:
-    return Caller(x_beets_api_client or x_client, clean_actor(x_beets_api_actor))
+    return Caller(x_beets_api_client, clean_actor(x_beets_api_actor))
