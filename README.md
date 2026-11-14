@@ -45,6 +45,7 @@ Interactive API docs are served at `/docs`.
 | `PUT` | `/albums/{id}/art` | Upload a JPEG or PNG as `cover.jpg`/`cover.png` (never embedded) |
 | `DELETE` | `/albums/{id}/art` | Remove the Album's art |
 | `GET` | `/audit?target=album:5&action=…&actor=…` | Every change made to the Library, newest first |
+| `GET` | `/audit/{id}` | One Audit entry; `404` if there is none |
 | `GET` | `/config` | beets config, with secrets redacted |
 | `POST` | `/modifications` | Preview a `beet modify` |
 | `GET` | `/modifications`, `/modifications/{id}` | Modification history, newest first |

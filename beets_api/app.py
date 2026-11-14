@@ -160,6 +160,12 @@ def create_app() -> FastAPI:
         total, entries = store.audit_page(limit, offset, target, action, operation_id, actor)
         return {"total": total, "limit": limit, "offset": offset, "results": entries}
 
+    @app.get("/audit/{id_}")
+    def get_audit_entry(id_: int):
+        if (entry := store.audit_entry(id_)) is None:
+            raise HTTPException(404, "audit entry not found")
+        return entry
+
     @app.get("/config")
     def get_config():
         return config.flatten(redact=True)

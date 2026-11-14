@@ -163,6 +163,12 @@ class Store:
             ).fetchall()
         return total, [dict(row) | {"changes": json.loads(row["changes"])} for row in rows]
 
+    def audit_entry(self, id_: int) -> dict | None:
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM audit WHERE id = ?", (id_,)).fetchone()
+        return None if row is None else dict(row) | {"changes": json.loads(row["changes"])}
+
     def audit_entries(
         self, operation_id: int | None = None, targets: list[str] = ()
     ) -> list[dict]:

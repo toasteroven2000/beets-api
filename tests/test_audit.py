@@ -122,6 +122,16 @@ def test_audit_filters_and_pages_newest_first(env):
     assert [e["id"] for e in page["results"]] == [ids[1]]
 
 
+def test_one_audit_entry_by_id(env):
+    album = env.seed_album()
+    env.client.put(f"/albums/{album.id}/art", content=b"\xff\xd8\xff\xe0jpeg", headers={"X-Beets-API-Actor": "alex"})
+    (listed,) = audit(env)["results"]
+    response = env.client.get(f"/audit/{listed['id']}")
+    assert response.status_code == 200
+    assert response.json() == listed and response.json()["actor"] == "alex"
+    assert env.client.get("/audit/9999").status_code == 404
+
+
 def test_audit_is_append_only(env):
     album = env.seed_album()
     env.client.put(f"/albums/{album.id}/art", content=b"\xff\xd8\xff\xe0jpeg")
