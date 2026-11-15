@@ -398,7 +398,7 @@ def test_undo_removes_albums_items_and_copied_files_and_keeps_the_originals(env,
     id_ = imported(env, source)
     paths = [i.path for i in env.lib.items()]
     folder = os.path.dirname(paths[0])
-    done = env.undo(id_, **{"X-Beets-API-Client": "beets-ui"})
+    done = env.undo(id_, **{"X-Beets-API-Client": "beets-web"})
     assert done["result"]["undone"]
     assert len(env.lib.items()) == 0 and len(env.lib.albums()) == 0
     assert not any(os.path.exists(p) for p in paths)
@@ -407,7 +407,7 @@ def test_undo_removes_albums_items_and_copied_files_and_keeps_the_originals(env,
     assert len(list((env.trash / str(id_)).rglob("*.mp3"))) == 2  # the copies are in the Trash
 
     entry = env.client.get("/audit", params={"operation_id": id_, "action": "album.remove"}).json()["results"][0]
-    assert (entry["action"], entry["operation_id"], entry["client"]) == ("album.remove", id_, "beets-ui")
+    assert (entry["action"], entry["operation_id"], entry["client"]) == ("album.remove", id_, "beets-web")
     assert entry["changes"]["undo_of_import"] == id_ and len(entry["changes"]["trashed_to"]) == 2
     assert entry["changes"]["removed"]["album"]["album"] == "My Album"
     listed = env.client.get("/audit", params={"operation_id": id_}).json()["results"]

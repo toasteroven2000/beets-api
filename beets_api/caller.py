@@ -2,7 +2,7 @@
 
 Both are asserted by the caller and recorded in the Audit. beets-api has no
 authentication, so neither is proof: it relies on only trusted callers, such
-as beets-ui behind a proxy that signs people in, being able to reach it.
+as beets-web behind a proxy that signs people in, being able to reach it.
 """
 
 from dataclasses import dataclass

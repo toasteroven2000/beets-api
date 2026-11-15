@@ -91,7 +91,7 @@ The program making a request, named by the caller in the `X-Beets-API-Client` he
 _Avoid_: User, caller
 
 **Actor**:
-The person a Client acted for, named in the `X-Beets-API-Actor` header. beets-api does not sign anyone in, so the Client asserts it, such as beets-ui reading it from the proxy that did. It is recorded on Audit entries and on each Choice of an Import, so every Library change says who made it. Empty when the Client names nobody.
+The person a Client acted for, named in the `X-Beets-API-Actor` header. beets-api does not sign anyone in, so the Client asserts it, such as beets-web reading it from the proxy that did. It is recorded on Audit entries and on each Choice of an Import, so every Library change says who made it. Empty when the Client names nobody.
 _Avoid_: User, account, Client
 
 ### Beets extensions

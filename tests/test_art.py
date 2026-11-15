@@ -183,14 +183,14 @@ def test_remove_leaves_the_items_files_alone(env):
 
 def test_every_art_change_is_audited_with_its_client(env):
     album = env.seed_album()
-    added = upload(env, album, JPEG, client="beets-ui")
+    added = upload(env, album, JPEG, client="beets-web")
     replaced = upload(env, album, PNG)
     removed = remove(env, album, client="script")
 
     body = audit(env, target=f"album:{album.id}")
     assert body["results"] == [removed, replaced, added]
     assert [e["action"] for e in body["results"]] == ["art.remove", "art.upload", "art.upload"]
-    assert [e["client"] for e in body["results"]] == ["script", None, "beets-ui"]
+    assert [e["client"] for e in body["results"]] == ["script", None, "beets-web"]
     assert added["operation_id"] is None
     assert added["changes"]["artpath"]["old"] is None
     assert (added["changes"]["format"], added["changes"]["bytes"]) == ("jpg", len(JPEG))
