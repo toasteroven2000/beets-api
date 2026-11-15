@@ -1,0 +1,144 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "beets-api.fullname" . }}
+  labels:
+    {{- include "beets-api.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    {{- toYaml .Values.strategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "beets-api.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- if eq (include "beets-api.configSource" .) "inline" }}
+        checksum/config: {{ .Values.beetsConfig.raw | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "beets-api.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: BEETSDIR
+              value: {{ include "beets-api.beetsDir" . | quote }}
+            {{- with .Values.beetsApiConfig.trashDir }}
+            - name: BEETS_API_TRASH_DIR
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.beetsApiConfig.importPaths }}
+            - name: BEETS_API_IMPORT_PATHS
+              value: {{ join ":" . | quote }}
+            {{- end }}
+            # The root filesystem is read-only, so Python can't cache bytecode.
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            {{- with .Values.extraEnvs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8338
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /ping
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            periodSeconds: 5
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: config
+              mountPath: {{ include "beets-api.beetsDir" . | quote }}
+            {{- if ne (include "beets-api.configSource" .) "volume" }}
+            - name: beets-config
+              mountPath: {{ printf "%s/config.yaml" (include "beets-api.beetsDir" .) | quote }}
+              subPath: config.yaml
+              readOnly: true
+            {{- end }}
+            - name: music
+              mountPath: /music
+            {{- with .Values.beetsApiConfig.trashDir }}
+            - name: trash
+              mountPath: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if eq (include "beets-api.configSource" .) "inline" }}
+        - name: beets-config
+          configMap:
+            name: {{ include "beets-api.fullname" . }}
+        {{- else if eq (include "beets-api.configSource" .) "existing" }}
+        - name: beets-config
+          {{- if eq .Values.beetsConfig.existing.kind "Secret" }}
+          secret:
+            secretName: {{ .Values.beetsConfig.existing.name }}
+            items:
+              - key: {{ .Values.beetsConfig.existing.key }}
+                path: config.yaml
+          {{- else }}
+          configMap:
+            name: {{ .Values.beetsConfig.existing.name }}
+            items:
+              - key: {{ .Values.beetsConfig.existing.key }}
+                path: config.yaml
+          {{- end }}
+        {{- end }}
+        {{- range $name := splitList " " (include "beets-api.volumeNames" .) }}
+        - name: {{ $name }}
+          {{- if $.Values.storage.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "beets-api.claimName" (list $ $name) }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

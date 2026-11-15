@@ -1,0 +1,126 @@
+# beets-api keeps its state in SQLite files and runs one Import at a time in memory,
+# so it is always a single replica: there is no replicaCount or autoscaling.
+
+image:
+  repository: ghcr.io/toasteroven2000/beets-api
+  tag: latest
+  pullPolicy: Always
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# How a new pod replaces the old one. The volumes are ReadWriteOnce and the API
+# has one writer, so the old pod must stop first. Any Deployment strategy is
+# accepted, e.g. `type: RollingUpdate` with a `rollingUpdate:` map.
+strategy:
+  type: Recreate
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop:
+    - ALL
+  runAsUser: 65532
+  runAsGroup: 65532
+
+service:
+  type: ClusterIP
+  port: 8338
+
+# beets' config.yaml. The chart mounts the music library at /music, and beets' directory
+# (BEETSDIR, where its database and the API's own state live) from `storage.config`.
+# Where config.yaml comes from, in order:
+#
+#  1. beetsConfig.existing.name: a ConfigMap or Secret you manage, such as one holding API keys.
+#  2. beetsConfig.raw: the text below, which the chart keeps in a ConfigMap.
+#  3. neither (set raw to ""): beets reads config.yaml from the config volume (`dir`),
+#     which you put there yourself. It must set `directory: /music`, because the default
+#     (~/Music) is on the read-only root filesystem.
+#
+# Either way it is mounted at `dir`/config.yaml, so it is read-only to the API.
+beetsConfig:
+  # BEETSDIR, an absolute path where the config volume is mounted. beets keeps config.yaml,
+  # library.db and the API's beets-api.db there.
+  dir: /config
+  existing:
+    name: ""
+    kind: ConfigMap   # or Secret
+    key: config.yaml
+  raw: |
+    directory: /music
+    plugins: []
+
+# beets-api's own settings, apart from beets' config.yaml above.
+beetsApiConfig:
+  # Where removed files go instead of being deleted (BEETS_API_TRASH_DIR), mounted from
+  # `storage.trash`. Empty means no Trash, and then nothing that would delete a file is allowed.
+  trashDir: /trash
+  # Directories that Imports may read from (BEETS_API_IMPORT_PATHS). Mount them with
+  # `extraVolumes` and `extraVolumeMounts`. Empty means unset, and then an Import may
+  # read any path the container can.
+  importPaths: []
+
+storage:
+  # false keeps everything in emptyDir volumes: the library, its database, the audit and
+  # the Trash are all lost whenever the pod is replaced.
+  enabled: true
+  # Keep the claims when the release is uninstalled, so `helm uninstall` can't delete a library.
+  keepOnUninstall: true
+  # beetsConfig.dir: config, the beets database and beets-api.db (the audit and operation history).
+  config:
+    size: 1Gi
+    storageClass: ""
+    accessModes: [ReadWriteOnce]
+    existingClaim: ""
+  # /music: the music files.
+  music:
+    size: 1Gi
+    storageClass: ""
+    accessModes: [ReadWriteOnce]
+    existingClaim: ""
+  # beetsApiConfig.trashDir: files that were removed, until a Purge deletes them. Unused when trashDir is empty.
+  trash:
+    size: 1Gi
+    storageClass: ""
+    accessModes: [ReadWriteOnce]
+    existingClaim: ""
+
+# More environment variables for the container, as Kubernetes `env` entries. They come after
+# the ones the chart sets (BEETSDIR, BEETS_API_TRASH_DIR, ...), so they can override them.
+extraEnvs: []
+#  - name: TZ
+#    value: Europe/London
+#  - name: DISCOGS_TOKEN
+#    valueFrom:
+#      secretKeyRef: {name: beets-secrets, key: discogs}
+
+# More volumes, such as the directory that new music arrives in.
+extraVolumes: []
+#  - name: incoming
+#    nfs: {server: nas.local, path: /downloads}
+extraVolumeMounts: []
+#  - name: incoming
+#    mountPath: /incoming
+#    readOnly: true
+
+resources: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

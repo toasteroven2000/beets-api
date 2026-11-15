@@ -38,6 +38,10 @@ Interactive API docs are served at `/docs`.
 | `BEETS_API_TRASH_DIR` | unset: nothing that deletes a file is allowed | Directory that removed files are moved to instead of being deleted. A warning is logged if it is inside the music directory or an Import Path, where an Import could pick the files up again. |
 | `BEETS_API_IMPORT_PATHS` | unset: any path | Directories `POST /imports` may read from, separated by `:` like `PATH`. A requested path must resolve, after following symlinks, to one of these directories or somewhere inside it; otherwise the request is refused with `403`. Set but empty, it refuses every Import. Unset, Imports may read any path the server can, and a warning is logged at startup. |
 
+## Kubernetes
+
+A Helm chart is in [charts/beets-api](charts/beets-api): `helm install beets-api charts/beets-api`. The container runs as user 65532 with a read-only root filesystem and no capabilities, with the library, the music and the Trash on volumes (`storage.enabled: false` uses throwaway `emptyDir`s instead). It is always one replica, and the Deployment strategy is `Recreate` unless you set `strategy`. There is no Ingress, because the API has no authentication: keep the Service internal, or put something that authenticates in front of it. The API's own settings are under `beetsApiConfig`: `trashDir` (the Trash's mount path, `/trash` by default; empty means no Trash, so nothing that deletes a file is allowed) and `importPaths`. `beetsConfig.dir` is beets' `BEETSDIR` (`/config` by default), where the config volume is mounted. beets' `config.yaml` comes from `beetsConfig.existing` (a ConfigMap or Secret you manage, for API keys), from `beetsConfig.raw` (inline, kept in a ConfigMap), or, with `raw` empty, from the `/config` volume itself, where it must set `directory: /music`. `extraEnvs` adds environment variables, after the chart's own so they can override them. The probes use `GET /ping`.
+
 ## Endpoints
 
 | Method | Path | What it does |

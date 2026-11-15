@@ -1,0 +1,10 @@
+apiVersion: v2
+name: beets-api
+description: An HTTP API for reading and changing a beets music library, including imports
+type: application
+
+# The chart version: increment it with every change to the chart.
+version: 0.1.0
+
+# The version of beets-api. It names the image tag unless `image.tag` is set.
+appVersion: "0.1.0"
