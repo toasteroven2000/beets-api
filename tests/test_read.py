@@ -135,7 +135,7 @@ def test_album_art_is_404_without_album_art_or_file(env):
 
 
 
-def test_health_returns_empty_200(env):
-    response = env.client.get("/health")
+def test_ping_returns_empty_200(env):
+    response = env.client.get("/ping")
     assert response.status_code == 200
     assert response.content == b""

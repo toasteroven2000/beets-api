@@ -118,8 +118,8 @@ def create_app() -> FastAPI:
     def invalid_query(_: Request, exc: ParsingError):
         return JSONResponse({"detail": f"invalid query: {exc}"}, status_code=400)
 
-    @app.get("/health")
-    def health():
+    @app.get("/ping")
+    def ping():
         return responses.Response(status_code=200)
 
     @app.get("/list")
