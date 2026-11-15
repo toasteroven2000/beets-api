@@ -23,6 +23,7 @@ spec:
       labels:
         {{- include "beets-api.selectorLabels" . | nindent 8 }}
     spec:
+      {{- include "beets-api.validateMounts" . }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -76,22 +77,14 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-            - name: config
-              mountPath: {{ include "beets-api.beetsDir" . | quote }}
             {{- if ne (include "beets-api.configSource" .) "volume" }}
             - name: beets-config
               mountPath: {{ printf "%s/config.yaml" (include "beets-api.beetsDir" .) | quote }}
               subPath: config.yaml
               readOnly: true
             {{- end }}
-            - name: music
-              mountPath: /music
-            {{- with .Values.beetsApiConfig.trashDir }}
-            - name: trash
-              mountPath: {{ . | quote }}
-            {{- end }}
-            {{- with .Values.extraVolumeMounts }}
-            {{- toYaml . | nindent 12 }}
+            {{- range $key, $mount := .Values.extraVolumeMounts }}
+            - {{ toYaml (mergeOverwrite (dict "name" $key) $mount) | nindent 14 | trim }}
             {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
@@ -118,17 +111,19 @@ spec:
                 path: config.yaml
           {{- end }}
         {{- end }}
-        {{- range $name := splitList " " (include "beets-api.volumeNames" .) }}
-        - name: {{ $name }}
-          {{- if $.Values.storage.enabled }}
-          persistentVolumeClaim:
-            claimName: {{ include "beets-api.claimName" (list $ $name) }}
-          {{- else }}
-          emptyDir: {}
-          {{- end }}
+        {{- /* Only volumes some mount uses; a caller's source replaces the default emptyDir. */}}
+        {{- $mounted := list }}
+        {{- range $key, $mount := .Values.extraVolumeMounts }}
+        {{- $mounted = append $mounted ($mount.name | default $key) }}
         {{- end }}
-        {{- with .Values.extraVolumes }}
-        {{- toYaml . | nindent 8 }}
+        {{- range $name, $source := .Values.extraVolumes }}
+        {{- if has $name $mounted }}
+        {{- if and (hasKey $source "emptyDir") (gt (len $source) 1) }}
+        {{- $source = omit $source "emptyDir" }}
+        {{- end }}
+        - name: {{ $name }}
+          {{- toYaml $source | nindent 10 }}
+        {{- end }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

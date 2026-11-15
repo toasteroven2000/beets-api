@@ -42,7 +42,7 @@ service:
   port: 8338
 
 # beets' config.yaml. The chart mounts the music library at /music, and beets' directory
-# (BEETSDIR, where its database and the API's own state live) from `storage.config`.
+# (BEETSDIR, where its database and the API's own state live) from `extraVolumes` and `extraVolumeMounts` below.
 # Where config.yaml comes from, in order:
 #
 #  1. beetsConfig.existing.name: a ConfigMap or Secret you manage, such as one holding API keys.
@@ -67,37 +67,12 @@ beetsConfig:
 # beets-api's own settings, apart from beets' config.yaml above.
 beetsApiConfig:
   # Where removed files go instead of being deleted (BEETS_API_TRASH_DIR), mounted from
-  # `storage.trash`. Empty means no Trash, and then nothing that would delete a file is allowed.
+  # `extraVolumes.trash`. Empty means no Trash, and then nothing that would delete a file is allowed.
   trashDir: /trash
   # Directories that Imports may read from (BEETS_API_IMPORT_PATHS). Mount them with
   # `extraVolumes` and `extraVolumeMounts`. Empty means unset, and then an Import may
   # read any path the container can.
   importPaths: []
-
-storage:
-  # false keeps everything in emptyDir volumes: the library, its database, the audit and
-  # the Trash are all lost whenever the pod is replaced.
-  enabled: true
-  # Keep the claims when the release is uninstalled, so `helm uninstall` can't delete a library.
-  keepOnUninstall: true
-  # beetsConfig.dir: config, the beets database and beets-api.db (the audit and operation history).
-  config:
-    size: 1Gi
-    storageClass: ""
-    accessModes: [ReadWriteOnce]
-    existingClaim: ""
-  # /music: the music files.
-  music:
-    size: 1Gi
-    storageClass: ""
-    accessModes: [ReadWriteOnce]
-    existingClaim: ""
-  # beetsApiConfig.trashDir: files that were removed, until a Purge deletes them. Unused when trashDir is empty.
-  trash:
-    size: 1Gi
-    storageClass: ""
-    accessModes: [ReadWriteOnce]
-    existingClaim: ""
 
 # More environment variables for the container, as Kubernetes `env` entries. They come after
 # the ones the chart sets (BEETSDIR, BEETS_API_TRASH_DIR, ...), so they can override them.
@@ -108,13 +83,30 @@ extraEnvs: []
 #    valueFrom:
 #      secretKeyRef: {name: beets-secrets, key: discogs}
 
-# More volumes, such as the directory that new music arrives in.
-extraVolumes: []
-#  - name: incoming
+# Volumes and where they are mounted, as maps keyed by name so a caller can override one entry
+# without repeating the others. `extraVolumes.<name>` is a Kubernetes volume source (`nfs`,
+# `persistentVolumeClaim`, `emptyDir`, ...). `extraVolumeMounts.<key>` is a volumeMount whose
+# `name` is the volume to mount, and defaults to the key; give two mounts different keys to
+# mount one volume at two paths, each with its own `subPath`.
+#
+# The defaults keep everything in emptyDir volumes, so the library, its database, the audit and
+# the Trash are lost whenever the pod is replaced: override them for real use. Set an entry to
+# null to remove it (for example `extraVolumeMounts.trash: null` together with `trashDir: ""`).
+# The mounts must include `beetsConfig.dir`, `/music`, and `beetsApiConfig.trashDir` when set.
+extraVolumes:
+  config: {emptyDir: {}}
+  music: {emptyDir: {}}
+  trash: {emptyDir: {}}
+#  incoming:
 #    nfs: {server: nas.local, path: /downloads}
-extraVolumeMounts: []
-#  - name: incoming
+
+extraVolumeMounts:
+  config: {mountPath: /config}
+  music: {mountPath: /music}
+  trash: {mountPath: /trash}
+#  incoming:
 #    mountPath: /incoming
+#    subPath: downloads
 #    readOnly: true
 
 resources: {}

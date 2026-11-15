@@ -52,20 +52,6 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 
 {{/*
-The volumes that are mounted: the Trash only exists when beetsApiConfig.trashDir is set.
-*/}}
-{{- define "beets-api.volumeNames" -}}
-{{- $names := list "config" "music" -}}
-{{- if .Values.beetsApiConfig.trashDir -}}
-{{- if not (hasPrefix "/" .Values.beetsApiConfig.trashDir) -}}
-{{- fail "beetsApiConfig.trashDir must be an absolute path" -}}
-{{- end -}}
-{{- $names = append $names "trash" -}}
-{{- end -}}
-{{- join " " $names -}}
-{{- end }}
-
-{{/*
 BEETSDIR: beetsConfig.dir without a trailing slash, which must be absolute and not the music or Trash volume.
 */}}
 {{- define "beets-api.beetsDir" -}}
@@ -96,11 +82,23 @@ volume
 {{- end }}
 
 {{/*
-The name of the claim behind /config, /music or /trash: the user's own, or one made by this chart.
-Called as (list $ "music").
+Fail unless the mounts include the paths beets-api uses: BEETSDIR, /music and the Trash.
 */}}
-{{- define "beets-api.claimName" -}}
-{{- $root := index . 0 -}}
-{{- $name := index . 1 -}}
-{{- default (printf "%s-%s" (include "beets-api.fullname" $root) $name) (index $root.Values.storage $name).existingClaim -}}
+{{- define "beets-api.validateMounts" -}}
+{{- $paths := list -}}
+{{- range $key, $mount := .Values.extraVolumeMounts -}}
+{{- $paths = append $paths (trimSuffix "/" $mount.mountPath) -}}
+{{- end -}}
+{{- $needed := list (include "beets-api.beetsDir" .) "/music" -}}
+{{- if .Values.beetsApiConfig.trashDir -}}
+{{- if not (hasPrefix "/" .Values.beetsApiConfig.trashDir) -}}
+{{- fail "beetsApiConfig.trashDir must be an absolute path" -}}
+{{- end -}}
+{{- $needed = append $needed (trimSuffix "/" .Values.beetsApiConfig.trashDir) -}}
+{{- end -}}
+{{- range $needed -}}
+{{- if not (has . $paths) -}}
+{{- fail (printf "extraVolumeMounts has no mount at %s" .) -}}
+{{- end -}}
+{{- end -}}
 {{- end }}
