@@ -536,3 +536,91 @@ def test_undo_says_why_when_the_trash_is_not_configured(env, source, monkeypatch
     assert preview["allowed"] is False and any("Trash" in r for r in preview["reasons"])
     assert env.client.post(undo_url(id_)).status_code == 409
     assert len(env.lib.items()) == 2
+
+
+# ---- progress: how many Tasks to expect, and how many are done ----
+
+def three_albums(env):
+    for name in ("a", "b", "c"):
+        make_album_files(str(env.tmp_path / "multi" / name), album=f"Album {name}")
+    return str(env.tmp_path / "multi")
+
+
+def progress(env, id_):
+    result = env.client.get(f"/imports/{id_}").json()["result"]
+    return result["expected_tasks"], result["tasks_done"]
+
+
+def wait_for_done(env, id_, n):
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if progress(env, id_)[1] >= n:
+            return
+        time.sleep(0.02)
+    raise AssertionError(f"tasks_done never reached {n}: {progress(env, id_)}")
+
+
+def test_import_reports_how_many_tasks_to_expect_and_how_many_are_done(env):
+    id_ = start(env, three_albums(env))
+    prompt(env, id_)
+    assert progress(env, id_) == (3, 0)
+    choose(env, id_, "asis")
+    wait_for_done(env, id_, 1)
+    prompt(env, id_)
+    choose(env, id_, "skip")  # a skipped Task is done too
+    wait_for_done(env, id_, 2)
+    prompt(env, id_)
+    choose(env, id_, "asis")
+    done = finish(env, id_)
+    assert (done["result"]["expected_tasks"], done["result"]["tasks_done"]) == (3, 3)
+
+
+def test_expected_tasks_is_known_before_the_first_prompt_and_starts_null(env):
+    path = three_albums(env)
+    created = env.client.post("/imports", json={"paths": [path]}).json()
+    assert created["result"]["tasks_done"] == 0  # the count may not be ready for the first response
+    prompt(env, created["id"])
+    assert progress(env, created["id"])[0] == 3
+    env.client.delete(f"/imports/{created['id']}")
+
+
+def test_singletons_count_files_not_folders(env):
+    # two folders of two files each
+    for name in ("a", "b"):
+        make_album_files(str(env.tmp_path / "s" / name), album=f"Album {name}")
+    id_ = start(env, str(env.tmp_path / "s"), singletons=True)
+    prompt(env, id_)
+    assert progress(env, id_)[0] == 4
+    env.client.delete(f"/imports/{id_}")
+
+
+def test_folders_a_resumed_import_skips_are_not_expected_again(env):
+    incoming = env.tmp_path / "incoming"
+    make_album_files(str(incoming / "a"), album="Album A")
+    make_album_files(str(incoming / "b"), album="Album B")
+    id_ = start(env, str(incoming))
+    prompt(env, id_)
+    assert progress(env, id_)[0] == 2
+    choose(env, id_, "asis")
+    env.wait(f"/imports/{id_}", "waiting_for_choice")
+    music = env.tmp_path / "home" / "Music" / "Artist" / "Album A"
+    end = time.monotonic() + 10
+    while time.monotonic() < end and not (music.exists() and len(list(music.iterdir())) == 2):
+        time.sleep(0.02)
+    time.sleep(0.3)
+    restart(env)
+    # Only Album B is left of what beets would resume.
+    second = start(env, str(incoming))
+    prompt(env, second)
+    assert progress(env, second)[0] == 1
+    env.client.delete(f"/imports/{second}")
+
+
+def test_a_failure_to_count_does_not_stop_the_import(env, source, monkeypatch):
+    from beets_api import imports
+    monkeypatch.setattr(imports, "count_tasks", lambda session: 1 / 0)
+    id_ = start(env, source)
+    prompt(env, id_)
+    assert progress(env, id_)[0] is None
+    choose(env, id_, "asis")
+    assert finish(env, id_)["status"] == "completed"

@@ -13,6 +13,7 @@ import uuid
 from beets import config
 from beets.autotag import tag_album, tag_item
 from beets.importer import Action, DuplicateAction, ImportAbortError, ImportSession
+from beets.importer.tasks import ImportTaskFactory
 from fastapi import HTTPException
 
 from .caller import Caller
@@ -108,6 +109,25 @@ def _summary(op: dict) -> dict:
     return {k: op[k] for k in keys} | {"counts": counts}
 
 
+def count_tasks(session) -> int:
+    """How many Import Tasks beets will find, counted the way it finds them.
+
+    One per folder of music (or per file when importing singletons), leaving out
+    what an earlier Import already finished. It is an estimate: choosing "Import
+    as tracks" or "Group albums" for a folder adds Tasks beets can't know of yet.
+    """
+    session.set_config(config["import"])  # beets does this again when it runs
+    n = 0
+    for toppath in session.paths:
+        session.ask_resume(toppath)  # what a resumed Import skips depends on it
+        for dirs, paths in ImportTaskFactory(toppath, session).paths():
+            if session.config["singletons"]:
+                n += sum(1 for p in paths if not session.already_imported(toppath, [p]))
+            elif not session.already_imported(toppath, dirs):
+                n += 1
+    return n
+
+
 class ApiImportSession(ImportSession):
     def __init__(
         self, lib, paths: list[str], op_id: int, store: Store, trash: Trash,
@@ -123,6 +143,8 @@ class ApiImportSession(ImportSession):
         # attributed to the person who made it, not only to whoever started the Import.
         self.actors: dict[int, str | None] = {}
         self.mode = mode
+        self.expected: int | None = None  # Tasks beets will ask about, counted at the start
+        self.tasks_done = 0  # Tasks beets has finished, skipped ones too
         self.lock = threading.Lock()
         self.answers: queue.Queue = queue.Queue()
         self.prompt: dict | None = None
@@ -133,6 +155,7 @@ class ApiImportSession(ImportSession):
     def _save(self, status: str, **extra) -> None:
         result = {
             "prompt": self.prompt, "choices": self.history, "mode": self.mode, "actor": self.actor,
+            "expected_tasks": self.expected, "tasks_done": self.tasks_done,
         } | extra
         self.store.update(self.op_id, status, result)
 
@@ -199,6 +222,9 @@ class ApiImportSession(ImportSession):
         def finalize_and_audit(session):
             finalize(session)
             self._audit(task)
+            with self.lock:
+                self.tasks_done += 1
+                self._save("waiting_for_choice" if self.prompt else "running")
 
         task.finalize = finalize_and_audit
 
@@ -314,6 +340,11 @@ class ApiImportSession(ImportSession):
 
     def execute(self) -> None:
         try:
+            try:
+                self.expected = count_tasks(self)
+            except Exception:  # progress is a courtesy: never stop an Import over it
+                log.exception("could not count the tasks of import %s", self.op_id)
+            self._save("running")
             self.run()
             status = "aborted" if self.abort_requested else "completed"
             extra = {}
@@ -361,7 +392,7 @@ class Imports:
             forget_cached_paths(self.lib)
             # Kept with the Import: config can change later, and undo depends on it.
             mode = import_mode(settings)
-            result = {"prompt": None, "choices": [], "mode": mode}
+            result = {"prompt": None, "choices": [], "mode": mode, "expected_tasks": None, "tasks_done": 0}
             id_ = self.store.create(KIND, "running", request, result)
             session = ApiImportSession(self.lib, paths, id_, self.store, self.trash, caller, mode)
             self.sessions[id_] = session
