@@ -339,7 +339,7 @@ class ApiImportSession(ImportSession):
             outcomes.append({
                 "paths": _paths(task.paths),
                 "skipped": task.skip,
-                "items": [to_json(i, ["id", "path"]) for i in items if i.id],
+                "items": [to_json(i, ["id", "album_id", "path"]) for i in items if i.id],
             })
         return outcomes
 

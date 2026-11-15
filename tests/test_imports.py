@@ -690,3 +690,20 @@ def test_tasks_are_empty_once_the_import_has_ended_or_could_not_be_planned(env, 
     prompt(env, second)
     assert folder_tasks(env, second)["total"] == 0
     env.client.delete(f"/imports/{second}")
+
+
+def test_outcome_items_say_which_album_they_are_in(env, source):
+    id_ = start(env, source)
+    choose(env, id_, "asis")
+    done = finish(env, id_)
+    album = env.lib.albums().get()
+    items = done["result"]["outcomes"][0]["items"]
+    assert len(items) == 2 and {i["album_id"] for i in items} == {album.id}
+
+
+def test_singleton_outcome_items_are_in_no_album(env, source):
+    id_ = start(env, source, singletons=True)
+    choose(env, id_, "asis")
+    choose(env, id_, "asis")
+    done = finish(env, id_)
+    assert {i["album_id"] for o in done["result"]["outcomes"] for i in o["items"]} == {None}
