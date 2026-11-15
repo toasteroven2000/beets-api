@@ -60,6 +60,7 @@ Interactive API docs are served at `/docs`.
 | `POST` | `/purges/{id}/confirm` | Delete what a Preview lists. Cannot be undone; refused with `409` if the Trash changed since the Preview |
 | `POST` | `/imports` | Start an import from server paths |
 | `GET` | `/imports`, `/imports/{id}` | Import history, newest first; one Import's progress and current prompt. `result.expected_tasks` is how many Import Tasks beets will ask about, counted when the Import starts (one per folder of music, or per file when importing singletons, leaving out what a resumed Import skips), and `result.tasks_done` how many it has finished, skipped ones included. The total is an estimate: choosing "Import as tracks" or "Group albums" for a folder adds Tasks, and it is `null` if counting failed |
+| `GET` | `/imports/{id}/tasks?state=…` | The Import Tasks an active Import expects, in the order beets will ask, each `done`, `current` or `pending` (filter with repeatable `state`; paged with `limit` and `offset`). Empty once the Import ends, or if the Tasks could not be counted |
 | `POST` | `/imports/{id}/choice` | Answer an import prompt |
 | `GET` | `/imports/{id}/undo` | Preview undoing an Import: the Albums, Items and files it would remove, and `reasons` if it may not be undone. Changes nothing |
 | `POST` | `/imports/{id}/undo` | Remove what an Import added and move the files it copied in to the Trash; `409` with the reasons when unsafe. Only a plain `copy` Import can be undone, and not once anything it made has been changed, or if it replaced existing records |

@@ -618,9 +618,67 @@ def test_folders_a_resumed_import_skips_are_not_expected_again(env):
 
 def test_a_failure_to_count_does_not_stop_the_import(env, source, monkeypatch):
     from beets_api import imports
-    monkeypatch.setattr(imports, "count_tasks", lambda session: 1 / 0)
+    monkeypatch.setattr(imports, "plan_tasks", lambda session: 1 / 0)
     id_ = start(env, source)
     prompt(env, id_)
     assert progress(env, id_)[0] is None
     choose(env, id_, "asis")
     assert finish(env, id_)["status"] == "completed"
+
+
+# ---- the Tasks themselves, in order ----
+
+def folder_tasks(env, id_, **params):
+    response = env.client.get(f"/imports/{id_}/tasks", params=params)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def names(listing):
+    return [(os.path.basename(t["paths"][0]), t["state"]) for t in listing["results"]]
+
+
+def test_tasks_lists_the_expected_folders_in_order_with_where_each_is(env):
+    id_ = start(env, three_albums(env))
+    prompt(env, id_)
+    assert names(folder_tasks(env, id_)) == [("a", "current"), ("b", "pending"), ("c", "pending")]
+    choose(env, id_, "asis")
+    wait_for_done(env, id_, 1)
+    prompt(env, id_)
+    assert names(folder_tasks(env, id_)) == [("a", "done"), ("b", "current"), ("c", "pending")]
+    assert names(folder_tasks(env, id_, state="pending")) == [("c", "pending")]
+    both = folder_tasks(env, id_, state=["done", "current"])
+    assert both["total"] == 2
+    env.client.delete(f"/imports/{id_}")
+
+
+def test_tasks_pages_and_validates(env):
+    id_ = start(env, three_albums(env))
+    prompt(env, id_)
+    page = folder_tasks(env, id_, limit=1, offset=1)
+    assert (page["total"], names(page)) == (3, [("b", "pending")])
+    assert env.client.get(f"/imports/{id_}/tasks", params={"state": "later"}).status_code == 422
+    assert env.client.get("/imports/99/tasks").status_code == 404
+    env.client.delete(f"/imports/{id_}")
+
+
+def test_tasks_of_singletons_are_files(env):
+    make_album_files(str(env.tmp_path / "s" / "a"))
+    id_ = start(env, str(env.tmp_path / "s"), singletons=True)
+    prompt(env, id_)
+    listing = folder_tasks(env, id_)
+    assert [os.path.basename(t["paths"][0]) for t in listing["results"]] == ["1 One.mp3", "2 Two.mp3"]
+    env.client.delete(f"/imports/{id_}")
+
+
+def test_tasks_are_empty_once_the_import_has_ended_or_could_not_be_planned(env, source, monkeypatch):
+    id_ = start(env, source)
+    choose(env, id_, "asis")
+    finish(env, id_)
+    assert folder_tasks(env, id_) == {"total": 0, "limit": 100, "offset": 0, "results": []}
+    from beets_api import imports
+    monkeypatch.setattr(imports, "plan_tasks", lambda session: 1 / 0)
+    second = start(env, source)
+    prompt(env, second)
+    assert folder_tasks(env, second)["total"] == 0
+    env.client.delete(f"/imports/{second}")

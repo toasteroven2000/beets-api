@@ -281,6 +281,16 @@ def create_app() -> FastAPI:
     def get_import(id_: int):
         return imports.get(id_)
 
+    @app.get("/imports/{id_}/tasks")
+    def import_tasks(
+        id_: int,
+        state: Annotated[list[str], Query()] = [],
+        limit: Annotated[int, Query(ge=1)] = 100,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ):
+        """The Import Tasks beets expects, each done, current or pending, in the order it will ask."""
+        return imports.tasks(id_, state, limit, offset)
+
     @app.post("/imports/{id_}/choice", status_code=202)
     def choose(id_: int, body: ChoiceRequest, who: Annotated[Caller, Depends(caller)]):
         return imports.choose(id_, body.model_dump(), who)

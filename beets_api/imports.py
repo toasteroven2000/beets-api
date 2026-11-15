@@ -109,23 +109,24 @@ def _summary(op: dict) -> dict:
     return {k: op[k] for k in keys} | {"counts": counts}
 
 
-def count_tasks(session) -> int:
-    """How many Import Tasks beets will find, counted the way it finds them.
+def plan_tasks(session) -> list[tuple[str, ...]]:
+    """The Import Tasks beets will find, in the order it will ask, found the way it finds them.
 
-    One per folder of music (or per file when importing singletons), leaving out
-    what an earlier Import already finished. It is an estimate: choosing "Import
-    as tracks" or "Group albums" for a folder adds Tasks beets can't know of yet.
+    One per folder of music (or per file when importing singletons), each as its
+    paths, leaving out what an earlier Import already finished. It is an estimate:
+    choosing "Import as tracks" or "Group albums" for a folder changes the Tasks
+    after it, which beets can't know of yet.
     """
     session.set_config(config["import"])  # beets does this again when it runs
-    n = 0
+    plan = []
     for toppath in session.paths:
         session.ask_resume(toppath)  # what a resumed Import skips depends on it
         for dirs, paths in ImportTaskFactory(toppath, session).paths():
             if session.config["singletons"]:
-                n += sum(1 for p in paths if not session.already_imported(toppath, [p]))
+                plan += [(json_value(p),) for p in paths if not session.already_imported(toppath, [p])]
             elif not session.already_imported(toppath, dirs):
-                n += 1
-    return n
+                plan.append(tuple(json_value(d) for d in dirs))
+    return plan
 
 
 class ApiImportSession(ImportSession):
@@ -144,6 +145,8 @@ class ApiImportSession(ImportSession):
         self.actors: dict[int, str | None] = {}
         self.mode = mode
         self.expected: int | None = None  # Tasks beets will ask about, counted at the start
+        self.plan: list[tuple[str, ...]] = []  # those Tasks, in the order beets will ask
+        self.finished: set[tuple[str, ...]] = set()  # the paths of the Tasks beets has finished
         self.tasks_done = 0  # Tasks beets has finished, skipped ones too
         self.lock = threading.Lock()
         self.answers: queue.Queue = queue.Queue()
@@ -223,6 +226,7 @@ class ApiImportSession(ImportSession):
             finalize(session)
             self._audit(task)
             with self.lock:
+                self.finished.add(tuple(_paths(task.paths)))
                 self.tasks_done += 1
                 self._save("waiting_for_choice" if self.prompt else "running")
 
@@ -341,7 +345,8 @@ class ApiImportSession(ImportSession):
     def execute(self) -> None:
         try:
             try:
-                self.expected = count_tasks(self)
+                self.plan = plan_tasks(self)
+                self.expected = len(self.plan)
             except Exception:  # progress is a courtesy: never stop an Import over it
                 log.exception("could not count the tasks of import %s", self.op_id)
             self._save("running")
@@ -355,7 +360,18 @@ class ApiImportSession(ImportSession):
         if any(c["action"] == "abort" for c in self.history):
             status = "aborted"
         self.prompt = None
+        self.plan = []  # nothing is left to come
         self._save(status, outcomes=self._outcomes(), **extra)
+
+    def planned(self) -> list[dict]:
+        """Each planned Task and where it is: done, current (being asked about) or pending."""
+        with self.lock:
+            current = tuple(self.prompt["paths"]) if self.prompt else None
+            return [
+                {"paths": list(key),
+                 "state": "done" if key in self.finished else "current" if key == current else "pending"}
+                for key in self.plan
+            ]
 
 
 class Imports:
@@ -413,6 +429,15 @@ class Imports:
         if op is None:
             raise HTTPException(404, "import not found")
         return op
+
+    def tasks(self, id_: int, states: list[str], limit: int, offset: int) -> dict:
+        """The Tasks an active Import expects, in the order beets will ask. Empty once it ends."""
+        self.get(id_)
+        if unknown := sorted(set(states) - {"done", "current", "pending"}):
+            raise HTTPException(422, f"states are done, current and pending, not {unknown}")
+        session = self.sessions.get(id_)
+        planned = [t for t in (session.planned() if session else []) if not states or t["state"] in states]
+        return {"total": len(planned), "limit": limit, "offset": offset, "results": planned[offset:offset + limit]}
 
     def page(self, statuses: list[str], limit: int, offset: int) -> dict:
         total, ops = self.store.page(KIND, statuses, limit, offset)
