@@ -9,6 +9,7 @@ import os
 import queue
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 from beets import config
 from beets.autotag import tag_album, tag_item
@@ -381,6 +382,9 @@ class Imports:
         self.roots = roots
         self.trash = trash
         self.undoer = Undo(lib, store, trash)
+        # Undoing moves files, so it runs in the background, one at a time.
+        self.undo_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="undo")
+        self.undoing: set[int] = set()
         self.lock = threading.Lock()
         self.sessions: dict[str, ApiImportSession] = {}
         self.active: ApiImportSession | None = None
@@ -398,6 +402,8 @@ class Imports:
         with self.lock:
             if self.active is not None:
                 raise HTTPException(409, f"import {self.active.op_id} is still active")
+            if self.undoing:
+                raise HTTPException(409, f"an undo of import {min(self.undoing)} is still running")
             # Beets' import config is global, which is why one Import runs at a time.
             settings = config["import"]
             settings["autotag"] = True  # Without autotag there are no prompts.
@@ -428,7 +434,7 @@ class Imports:
         op = self.store.get(id_, KIND)
         if op is None:
             raise HTTPException(404, "import not found")
-        return op
+        return op | {"undoing": id_ in self.undoing}
 
     def tasks(self, id_: int, states: list[str], limit: int, offset: int) -> dict:
         """The Tasks an active Import expects, in the order beets will ask. Empty once it ends."""
@@ -469,8 +475,33 @@ class Imports:
         return self.undoer.plan(self.get(id_), self._is_active(id_))
 
     def undo(self, id_: int, caller: Caller = Caller()) -> dict:
+        """Refuse now if it is unsafe; otherwise undo in the background.
+
+        Poll the Import: `undoing` is true until it finishes, then `result.undone`
+        is set, or `result.undo_error` says what went wrong.
+        """
+        plan = self.undoer.plan(self.get(id_), self._is_active(id_))  # reads only
+        if not plan["allowed"]:
+            raise HTTPException(409, "cannot undo this Import: " + "; ".join(plan["reasons"]))
         with self.lock:  # no Import starts, nor another undo runs, meanwhile
-            return self.undoer.run(self.get(id_), self._is_active(id_), caller)
+            if self.undoing:
+                raise HTTPException(409, f"an undo of import {min(self.undoing)} is still running")
+            self.undoing.add(id_)
+        self.undo_executor.submit(self._undo, id_, caller)
+        return self.get(id_)
+
+    def _undo(self, id_: int, caller: Caller) -> None:
+        try:
+            with self.lib.music_dir_context():
+                self.undoer.run(self.get(id_), False, caller)
+        except Exception as exc:
+            log.exception("undo of import %s failed", id_)
+            op = self.get(id_)
+            error = exc.detail if isinstance(exc, HTTPException) else str(exc)
+            self.store.update(id_, op["status"], op["result"] | {"undo_error": error})
+        finally:
+            with self.lock:
+                self.undoing.discard(id_)
 
     def _is_active(self, id_: int) -> bool:
         return self.active is not None and self.active.op_id == id_

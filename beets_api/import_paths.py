@@ -57,11 +57,41 @@ def _sort_key(entry: dict):
     return (entry["type"] != "dir", entry["name"].casefold(), entry["name"])
 
 
-def browse(roots: Roots | None, path: str | None) -> dict:
-    """The Import Paths themselves without a path, otherwise one directory's children."""
+def _kind(child: os.DirEntry, roots: Roots) -> str | None:
+    """"dir" or "file" for what an Import would accept, else None.
+
+    A real child of a directory that is inside the roots is inside them too, so
+    only a symlink needs its target resolved. Both checks use what the directory
+    listing already says, so no file is stat'ed until it is on the page.
+    """
+    try:
+        if child.is_symlink() and not roots.contains(child.path):
+            return None
+        if child.is_dir():
+            return "dir"
+        if child.is_file():
+            return "file"
+    except OSError:  # deleted while listing
+        pass
+    return None
+
+
+def _page(entries: list, limit: int, offset: int, path, parent) -> dict:
+    return {
+        "path": path, "parent": parent, "total": len(entries), "limit": limit, "offset": offset,
+        "entries": entries[offset:offset + limit],
+    }
+
+
+def browse(roots: Roots | None, path: str | None, limit: int = 200, offset: int = 0) -> dict:
+    """The Import Paths themselves without a path, otherwise a page of one directory's children.
+
+    Only the page is stat'ed for its size and time, so a directory of tens of
+    thousands of files is as quick to page through as a small one.
+    """
     if path is None:
         entries = [e for root in roots or [] if (e := _entry(root)) and e["type"] == "dir"]
-        return {"path": None, "parent": None, "entries": sorted(entries, key=_sort_key)}
+        return _page(sorted(entries, key=_sort_key), limit, offset, None, None)
     if not os.path.isabs(path):
         raise HTTPException(400, "path must be absolute")
     path = os.path.normpath(path)
@@ -72,10 +102,14 @@ def browse(roots: Roots | None, path: str | None) -> dict:
     if not os.path.isdir(path):
         raise HTTPException(400, "path is not a directory")
     try:
-        names = os.listdir(path)
+        with os.scandir(path) as scan:
+            children = [c for c in scan if not c.name.startswith(".")]
     except PermissionError:
         raise HTTPException(403, "directory is not readable") from None
-    children = (os.path.join(path, n) for n in names if not n.startswith("."))
-    entries = [e for p in children if roots.contains(p) and (e := _entry(p))]
+    shown = [(c, kind) for c in children if (kind := _kind(c, roots))]
+    shown.sort(key=lambda ck: (ck[1] != "dir", ck[0].name.casefold(), ck[0].name))
     parent = None if roots.is_root(path) else os.path.dirname(path)
-    return {"path": path, "parent": parent, "entries": sorted(entries, key=_sort_key)}
+    page = shown[offset:offset + limit]
+    entries = [e for c, _ in page if (e := _entry(os.path.join(path, c.name)))]
+    return {"path": path, "parent": parent, "total": len(shown), "limit": limit,
+            "offset": offset, "entries": entries}

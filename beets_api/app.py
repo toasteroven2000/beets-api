@@ -31,6 +31,11 @@ from .trash import Trash
 log = logging.getLogger(__name__)
 
 
+# A page can't be asked to be bigger: building and sending it blocks the server.
+MAX_LIMIT = 1000
+Limit = Annotated[int, Query(ge=1, le=MAX_LIMIT)]
+
+
 class JSONResponse(responses.JSONResponse):
     """Beets builds field names from a set, so their order differs between processes."""
 
@@ -89,7 +94,7 @@ def create_app() -> FastAPI:
     store_path = os.environ.get("BEETS_API_DB") or default_store_path()
     log.info("history: %s", store_path)
     store = Store(store_path)
-    store.mark_interrupted(("queued", "applying", "running", "waiting_for_choice"))
+    store.mark_interrupted(("previewing", "queued", "applying", "running", "waiting_for_choice"))
     trash = Trash(os.environ.get("BEETS_API_TRASH_DIR"), lib.directory)
     modifications = Modifications(lib, store)
     removals = Removals(lib, store, trash)
@@ -126,7 +131,7 @@ def create_app() -> FastAPI:
     def list_(
         scope: Literal["item", "album"],
         query: str = "",
-        limit: Annotated[int, Query(ge=1)] = 100,
+        limit: Limit = 100,
         offset: Annotated[int, Query(ge=0)] = 0,
         fields: str | None = None,
     ):
@@ -175,7 +180,7 @@ def create_app() -> FastAPI:
         action: Annotated[list[str], Query()] = [],
         operation_id: int | None = None,
         actor: str | None = None,
-        limit: Annotated[int, Query(ge=1)] = 50,
+        limit: Limit = 50,
         offset: Annotated[int, Query(ge=0)] = 0,
     ):
         """Every change made to the Library through the API, newest first."""
@@ -192,14 +197,14 @@ def create_app() -> FastAPI:
     def get_config():
         return config.flatten(redact=True)
 
-    @app.post("/modifications", status_code=201)
+    @app.post("/modifications", status_code=202)
     def create_modification(body: ModificationRequest):
         return modifications.create(body.model_dump())
 
     @app.get("/modifications")
     def list_modifications(
         status: Annotated[list[str], Query()] = [],
-        limit: Annotated[int, Query(ge=1)] = 50,
+        limit: Limit = 50,
         offset: Annotated[int, Query(ge=0)] = 0,
     ):
         return modifications.page(status, limit, offset)
@@ -212,7 +217,7 @@ def create_app() -> FastAPI:
     def confirm_modification(id_: int, who: Annotated[Caller, Depends(caller)]):
         return modifications.confirm(id_, who)
 
-    @app.post("/removals", status_code=201)
+    @app.post("/removals", status_code=202)
     def create_removal(body: RemovalRequest):
         """Preview removing what a query matches, and deleting its files. Confirm applies it."""
         return removals.create(body.model_dump())
@@ -220,7 +225,7 @@ def create_app() -> FastAPI:
     @app.get("/removals")
     def list_removals(
         status: Annotated[list[str], Query()] = [],
-        limit: Annotated[int, Query(ge=1)] = 50,
+        limit: Limit = 50,
         offset: Annotated[int, Query(ge=0)] = 0,
     ):
         return removals.page(status, limit, offset)
@@ -238,7 +243,7 @@ def create_app() -> FastAPI:
         """What is in the Trash, a folder per operation."""
         return purges.listing()
 
-    @app.post("/purges", status_code=201)
+    @app.post("/purges", status_code=202)
     def create_purge(body: PurgeRequest):
         """Preview deleting Trash folders for good. With no filters, all of them."""
         return purges.create(body.model_dump(mode="json"))
@@ -246,7 +251,7 @@ def create_app() -> FastAPI:
     @app.get("/purges")
     def list_purges(
         status: Annotated[list[str], Query()] = [],
-        limit: Annotated[int, Query(ge=1)] = 50,
+        limit: Limit = 50,
         offset: Annotated[int, Query(ge=0)] = 0,
     ):
         return purges.page(status, limit, offset)
@@ -260,9 +265,13 @@ def create_app() -> FastAPI:
         return purges.confirm(id_, who)
 
     @app.get("/import-paths")
-    def get_import_paths(path: str | None = None):
-        """Without a path, the Import Paths; with one, that directory's children."""
-        return browse(roots, path)
+    def get_import_paths(
+        path: str | None = None,
+        limit: Limit = 200,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ):
+        """Without a path, the Import Paths; with one, a page of that directory's children."""
+        return browse(roots, path, limit, offset)
 
     @app.post("/imports", status_code=202)
     def create_import(body: ImportRequest, who: Annotated[Caller, Depends(caller)]):
@@ -271,7 +280,7 @@ def create_app() -> FastAPI:
     @app.get("/imports")
     def list_imports(
         status: Annotated[list[str], Query()] = [],
-        limit: Annotated[int, Query(ge=1)] = 50,
+        limit: Limit = 50,
         offset: Annotated[int, Query(ge=0)] = 0,
     ):
         """Import history, newest first."""
@@ -300,7 +309,7 @@ def create_app() -> FastAPI:
         """What undoing the Import would remove, and why it may not be undone."""
         return imports.undo_preview(id_)
 
-    @app.post("/imports/{id_}/undo")
+    @app.post("/imports/{id_}/undo", status_code=202)
     def undo_import(id_: int, who: Annotated[Caller, Depends(caller)]):
         """Remove what the Import added and the files it copied. 409 when unsafe."""
         return imports.undo(id_, who)

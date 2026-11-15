@@ -10,9 +10,9 @@ from beets.ui.commands.modify import _check_modify_operations, modify_parse_args
 from beets.util import functemplate
 from fastapi import HTTPException
 
-from .library import fingerprint, forget_cached_paths, json_value, to_json
+from .library import check_query, fingerprint, forget_cached_paths, json_value, to_json
 from .caller import Caller
-from .store import Store
+from .store import Progress, Store
 
 log = logging.getLogger(__name__)
 
@@ -163,9 +163,10 @@ def _apply_album(lib, entry: dict) -> None:
 def _summary(op: dict) -> dict:
     """A Modification without its Preview, which can be large."""
     result = op["result"]
+    preview = result.get("preview", {"albums": [], "items": []})  # none until it is built
     counts = {
-        "albums": len(result["preview"]["albums"]),
-        "items": len(result["preview"]["items"]),
+        "albums": len(preview["albums"]),
+        "items": len(preview["items"]),
         "applied": len(result.get("applied", [])),
         "failed": len(result.get("failed", [])),
     }
@@ -181,13 +182,25 @@ class Modifications:
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="modify")
 
     def create(self, request: dict) -> dict:
+        """Start building the Preview in the background; poll until it is no longer `previewing`."""
         album, query = request["scope"] == "album", request["query"]
         mods, dels = _parse_changes(album, request["set"], request["delete"])
-        write, move = ui.should_write(), ui.should_move()
-        preview = _build_preview(self.lib, album, query, mods, dels, move)
+        check_query(query, album)  # a bad query is the caller's mistake, so say so now
+        result = {"write": ui.should_write(), "move": ui.should_move()}
+        id_ = self.store.create(KIND, "previewing", request, result)
+        self.executor.submit(self._preview, id_, album, query, mods, dels, result)
+        return self.get(id_)
+
+    def _preview(self, id_: int, album: bool, query: str, mods, dels, result: dict) -> None:
+        try:
+            with self.lib.music_dir_context():
+                preview = _build_preview(self.lib, album, query, mods, dels, result["move"])
+        except Exception as exc:
+            log.exception("preview of modification %s failed", id_)
+            self.store.update(id_, "failed", result | {"error": str(exc)})
+            return
         status = "awaiting_confirmation" if any(preview.values()) else "no_changes"
-        result = {"write": write, "move": move, "preview": preview}
-        return self.get(self.store.create(KIND, status, request, result))
+        self.store.update(id_, status, result | {"preview": preview})
 
     def get(self, id_: int) -> dict:
         op = self.store.get(id_, KIND)
@@ -220,20 +233,20 @@ class Modifications:
         op = self.get(id_)
         if op["status"] != "awaiting_confirmation":
             raise HTTPException(409, f"cannot confirm while {op['status']}")
-        if stale := self._stale(op["result"]["preview"]):
-            self._reject(op, stale)
-            raise HTTPException(409, {"detail": "library changed since Preview", "stale": stale})
+        # Whether the Library changed since the Preview is checked when it is applied,
+        # not here, so confirming returns at once however big the Preview is.
         if not self.store.transition(id_, "awaiting_confirmation", "queued"):
             raise HTTPException(409, "already confirmed")
         self.executor.submit(self._apply, id_, caller)
         return self.get(id_)
 
     def _apply_one(
-        self, id_: int, result: dict, kind: str, entry: dict, apply_entry, caller: Caller
+        self, progress: Progress, result: dict, kind: str, entry: dict, apply_entry, caller: Caller
     ) -> None:
+        id_ = progress.id_
         ref = {"kind": kind, "id": entry["id"]}
         result["current"] = ref
-        self.store.update(id_, "applying", result)
+        progress.save("applying", result)
         try:
             path = apply_entry(entry)
         except Exception as exc:
@@ -256,17 +269,18 @@ class Modifications:
             if stale := self._stale(result["preview"]):
                 self._reject(op, stale)
                 return
-            self.store.update(id_, "applying", result)
+            progress = Progress(self.store, id_)
+            progress.save("applying", result, force=True)
             write, move = result["write"], result["move"]
             for entry in result["preview"]["albums"]:
                 self._apply_one(
-                    id_, result, "albums", entry, lambda e: _apply_album(self.lib, e), caller
+                    progress, result, "albums", entry, lambda e: _apply_album(self.lib, e), caller
                 )
             # Items' new paths depend on the Albums stored above.
             forget_cached_paths(self.lib)
             for entry in result["preview"]["items"]:
                 self._apply_one(
-                    id_, result, "items", entry,
+                    progress, result, "items", entry,
                     lambda e: _apply_item(self.lib, e, write, move), caller,
                 )
             result["current"] = None

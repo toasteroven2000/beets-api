@@ -110,6 +110,14 @@ class Trash:
                 moved.append(entry)
         return moved, left
 
+    def names(self) -> list[str]:
+        """The folder names alone, which is quick however much the Trash holds."""
+        if not self.configured:
+            return []
+        return sorted(
+            n for n in os.listdir(self.directory) if os.path.isdir(os.path.join(self.directory, n))
+        )
+
     def folders(self) -> list[dict]:
         """Every folder with its size, age and a fingerprint of what is in it."""
         if not self.configured:

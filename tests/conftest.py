@@ -59,9 +59,16 @@ class Env:
         return album
 
     def preview(self, **body):
+        """Ask for a Modification's Preview and wait until it is built."""
         response = self.client.post("/modifications", json=body)
-        assert response.status_code == 201, response.text
-        return response.json()
+        assert response.status_code == 202, response.text
+        return self.built(f"/modifications/{response.json()['id']}")
+
+    def built(self, url):
+        """Wait for a Preview that is built in the background."""
+        op = self.wait(url, "awaiting_confirmation", "no_changes", "failed")
+        assert op["status"] != "failed", op
+        return op
 
     def wait(self, url, *statuses, timeout=20):
         deadline = time.monotonic() + timeout
@@ -71,6 +78,19 @@ class Env:
                 return op
             time.sleep(0.02)
         raise AssertionError(f"{url} stuck: {op}")
+
+    def undo(self, import_id, **headers):
+        """Undo an Import and wait for the background work to finish."""
+        response = self.client.post(f"/imports/{import_id}/undo", headers=headers)
+        assert response.status_code == 202, response.text
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            op = self.client.get(f"/imports/{import_id}").json()
+            if not op["undoing"]:
+                assert "undo_error" not in op["result"], op["result"]
+                return op
+            time.sleep(0.02)
+        raise AssertionError(f"undo of {import_id} stuck")
 
     def confirm(self, op_id):
         response = self.client.post(f"/modifications/{op_id}/confirm")

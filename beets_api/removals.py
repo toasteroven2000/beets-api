@@ -11,8 +11,8 @@ from fastapi import HTTPException
 
 from .caller import Caller
 from .changes import Removed
-from .library import fingerprint, json_value, to_json
-from .store import Store
+from .library import check_query, fingerprint, json_value, to_json
+from .store import Progress, Store
 from .trash import Trash
 
 log = logging.getLogger(__name__)
@@ -48,10 +48,10 @@ def _build_preview(lib, album: bool, query: str) -> dict:
 def _summary(op: dict) -> dict:
     """A Removal without its Preview, which can be large."""
     result = op["result"]
+    preview = result.get("preview", {"albums": [], "items": []})  # none until it is built
     counts = {
-        "albums": len(result["preview"]["albums"]),
-        "items": len(result["preview"]["items"])
-        + sum(len(a["items"]) for a in result["preview"]["albums"]),
+        "albums": len(preview["albums"]),
+        "items": len(preview["items"]) + sum(len(a["items"]) for a in preview["albums"]),
         "removed": len(result.get("removed", [])),
         "failed": len(result.get("failed", [])),
     }
@@ -70,10 +70,23 @@ class Removals:
     def create(self, request: dict) -> dict:
         if not request["query"].strip():
             raise HTTPException(422, "a query is required: an empty one matches the whole Library")
-        preview = _build_preview(self.lib, request["scope"] == "album", request["query"])
+        check_query(request["query"], request["scope"] == "album")
+        result = {"trash_configured": self.trash.configured}
+        id_ = self.store.create(KIND, "previewing", request, result)
+        self.executor.submit(self._preview, id_, request, result)
+        return self.get(id_)
+
+    def _preview(self, id_: int, request: dict, result: dict) -> None:
+        """Build the Preview in the background; the request has already returned."""
+        try:
+            with self.lib.music_dir_context():
+                preview = _build_preview(self.lib, request["scope"] == "album", request["query"])
+        except Exception as exc:
+            log.exception("preview of removal %s failed", id_)
+            self.store.update(id_, "failed", result | {"error": str(exc)})
+            return
         status = "awaiting_confirmation" if any(preview.values()) else "no_changes"
-        result = {"preview": preview, "trash_configured": self.trash.configured}
-        return self.get(self.store.create(KIND, status, request, result))
+        self.store.update(id_, status, result | {"preview": preview})
 
     def get(self, id_: int) -> dict:
         op = self.store.get(id_, KIND)
@@ -110,9 +123,7 @@ class Removals:
         if op["status"] != "awaiting_confirmation":
             raise HTTPException(409, f"cannot confirm while {op['status']}")
         self.trash.require()
-        if stale := self._stale(op["result"]["preview"]):
-            self._reject(op, stale)
-            raise HTTPException(409, {"detail": "library changed since Preview", "stale": stale})
+        # Staleness is checked when it is applied, so confirming returns at once.
         if not self.store.transition(id_, "awaiting_confirmation", "queued"):
             raise HTTPException(409, "already confirmed")
         self.executor.submit(self._apply, id_, caller)
@@ -156,12 +167,13 @@ class Removals:
             if stale := self._stale(result["preview"]):
                 self._reject(op, stale)
                 return
-            self.store.update(id_, "applying", result)
+            progress = Progress(self.store, id_)
+            progress.save("applying", result, force=True)
             for kind, remove in (("albums", self._remove_album), ("items", self._remove_item)):
                 for entry in result["preview"][kind]:
                     ref = {"kind": kind, "id": entry["id"]}
                     result["current"] = ref
-                    self.store.update(id_, "applying", result)
+                    progress.save("applying", result)
                     try:
                         remove(entry, id_, caller)
                     except Exception as exc:

@@ -7,8 +7,8 @@ from conftest import restart
 
 def preview(env, **body):
     response = env.client.post("/removals", json=body)
-    assert response.status_code == 201, response.text
-    return response.json()
+    assert response.status_code == 202, response.text
+    return env.built(f"/removals/{response.json()['id']}")
 
 
 def confirm(env, op_id, **headers):
@@ -85,10 +85,7 @@ def test_confirm_is_rejected_if_the_library_changed_after_the_preview(env):
     changed.albumdisambig = "later"
     changed.store()
 
-    response = env.client.post(f"/removals/{op['id']}/confirm")
-
-    assert response.status_code == 409
-    assert env.client.get(f"/removals/{op['id']}").json()["status"] == "rejected"
+    assert confirm(env, op["id"])["status"] == "rejected"
     assert env.lib.get_album(album.id) is not None
 
 

@@ -139,3 +139,10 @@ def test_ping_returns_empty_200(env):
     response = env.client.get("/ping")
     assert response.status_code == 200
     assert response.content == b""
+
+
+def test_a_page_cannot_be_asked_to_be_huge(env):
+    for path, params in (("/list", {"scope": "item"}), ("/audit", {}), ("/modifications", {}),
+                         ("/removals", {}), ("/purges", {}), ("/imports", {})):
+        assert env.client.get(path, params=params | {"limit": 1001}).status_code == 422, path
+        assert env.client.get(path, params=params | {"limit": 1000}).status_code == 200, path

@@ -7,6 +7,7 @@ from conftest import restart
 def removal(env, album):
     """Remove an Album through the API, returning the Removal's id."""
     op = env.client.post("/removals", json={"scope": "album", "query": f"id:{album.id}"}).json()
+    env.built(f"/removals/{op['id']}")
     env.client.post(f"/removals/{op['id']}/confirm")
     env.wait(f"/removals/{op['id']}", "applied")
     return op["id"]
@@ -14,8 +15,8 @@ def removal(env, album):
 
 def preview(env, **body):
     response = env.client.post("/purges", json=body)
-    assert response.status_code == 201, response.text
-    return response.json()
+    assert response.status_code == 202, response.text
+    return env.built(f"/purges/{response.json()['id']}")
 
 
 def confirm(env, id_, **headers):
@@ -89,9 +90,7 @@ def test_confirm_is_rejected_when_the_folder_changed_after_the_preview(env):
     first = removal(env, env.seed_album("One"))
     op = preview(env)
     (env.trash / str(first) / "extra.txt").write_text("added later")
-    response = env.client.post(f"/purges/{op['id']}/confirm")
-    assert response.status_code == 409
-    assert env.client.get(f"/purges/{op['id']}").json()["status"] == "rejected"
+    assert confirm(env, op["id"])["status"] == "rejected"
     assert (env.trash / str(first)).exists()
 
 

@@ -10,8 +10,8 @@ def configure(env, monkeypatch, *roots):
     restart(env)
 
 
-def browse(env, path=None, status=200):
-    params = {} if path is None else {"path": str(path)}
+def browse(env, path=None, status=200, **page):
+    params = ({} if path is None else {"path": str(path)}) | page
     response = env.client.get("/import-paths", params=params)
     assert response.status_code == status, response.text
     return response.json()
@@ -32,7 +32,7 @@ def root(env):
 
 
 def test_unset_import_paths_list_nothing_and_refuse_browsing(env, root):
-    assert browse(env) == {"path": None, "parent": None, "entries": []}
+    assert browse(env) == {"path": None, "parent": None, "total": 0, "limit": 200, "offset": 0, "entries": []}
     browse(env, root, status=403)
 
 
@@ -126,3 +126,28 @@ def test_an_unreadable_directory_is_refused(env, root, monkeypatch):
         browse(env, locked, status=403)
     finally:
         locked.chmod(0o755)
+
+
+def test_a_big_directory_is_paged_with_directories_first(env, root, monkeypatch):
+    for i in range(5):
+        (root / f"track{i}.mp3").write_bytes(b"x")
+    configure(env, monkeypatch, root)
+    everything = names(browse(env, root))
+    assert everything[0] == "Album"  # the one directory leads
+    first = browse(env, root, limit=4)
+    second = browse(env, root, limit=4, offset=4)
+    assert (first["total"], first["limit"], first["offset"]) == (len(everything), 4, 0)
+    assert names(first) + names(second) == everything
+    assert [e["size"] for e in first["entries"] if e["type"] == "file"]  # only the page is stat'ed
+
+
+def test_a_page_beyond_the_end_is_empty(env, root, monkeypatch):
+    configure(env, monkeypatch, root)
+    page = browse(env, root, offset=1000)
+    assert page["entries"] == [] and page["total"] > 0
+
+
+def test_paging_limits_are_validated(env, root, monkeypatch):
+    configure(env, monkeypatch, root)
+    for params in ({"limit": 0}, {"limit": 100000}, {"offset": -1}):
+        browse(env, root, status=422, **params)

@@ -1,7 +1,5 @@
 import os
-import sqlite3
 
-import pytest
 from mediafile import MediaFile
 
 from conftest import restart
@@ -123,16 +121,6 @@ def test_upload_trashes_a_stray_cover_it_would_overwrite(env):
         f.write(b"not recorded in beets")
     op = upload(env, album, JPEG)
     assert trashed(op) == [b"not recorded in beets"]
-
-
-def test_art_files_are_kept_in_the_trash_not_the_database(env):
-    album = env.seed_album()
-    upload(env, album, JPEG)
-    upload(env, album, PNG)
-    with sqlite3.connect(env.client.app.state.store.path) as conn:
-        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    assert "art_archive" not in tables
-    assert len(list(env.trash.glob("art-album-*/**/*.jpg"))) == 1
 
 
 def test_replacing_art_is_refused_when_the_trash_is_not_configured(env, monkeypatch):

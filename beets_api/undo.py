@@ -27,7 +27,7 @@ MODE_REASONS = {
     "move": "the Import moved its files, so the originals are gone",
     "copy_delete": "the Import deleted the originals after copying them",
     "link": "the Import linked its files; only a plain copy can be undone",
-    "in_place": "the Import added its files where they were, so undoing would delete the originals",
+    "in_place": "the Import added its files where they were, so undoing would move the originals out of where they were",
 }
 IMPORT_ACTIONS = ("album.import", "item.import")
 

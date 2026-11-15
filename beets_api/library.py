@@ -6,7 +6,7 @@ import logging
 import os
 
 from beets import config, plugins
-from beets.library import Library
+from beets.library import Album, Item, Library, parse_query_string
 
 log = logging.getLogger(__name__)
 
@@ -23,6 +23,11 @@ def open_library() -> Library:
     plugins.send("library_opened", lib=lib)
     log.info("library: %s, music: %s", path, directory)
     return lib
+
+
+def check_query(query: str, album: bool) -> None:
+    """Raise beets' ParsingError (a 400) for a malformed query, without running it."""
+    parse_query_string(query, Album if album else Item)
 
 
 def forget_cached_paths(lib: Library) -> None:

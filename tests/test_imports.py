@@ -46,6 +46,15 @@ def choose(env, id_, action, **details):
         f"/imports/{id_}/choice", json={"prompt_id": current["id"], "action": action, **details}
     )
     assert response.status_code == 202, response.text
+    # The stored prompt only changes when the import thread saves, so wait for that:
+    # the next prompt() could otherwise return this one again.
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        stored = env.client.get(f"/imports/{id_}").json()["result"]["prompt"]
+        if stored is None or stored["id"] != current["id"]:
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"import {id_} never moved past prompt {current['id']}")
 
 
 def finish(env, id_):
@@ -389,15 +398,15 @@ def test_undo_removes_albums_items_and_copied_files_and_keeps_the_originals(env,
     id_ = imported(env, source)
     paths = [i.path for i in env.lib.items()]
     folder = os.path.dirname(paths[0])
-    done = env.client.post(undo_url(id_), headers={"X-Beets-API-Client": "beets-ui"})
-    assert done.status_code == 200, done.text
+    done = env.undo(id_, **{"X-Beets-API-Client": "beets-ui"})
+    assert done["result"]["undone"]
     assert len(env.lib.items()) == 0 and len(env.lib.albums()) == 0
     assert not any(os.path.exists(p) for p in paths)
     assert not os.path.exists(folder)  # the emptied album directory goes too
     assert len(os.listdir(os.path.join(source, "a"))) == 2  # originals stay
     assert len(list((env.trash / str(id_)).rglob("*.mp3"))) == 2  # the copies are in the Trash
 
-    entry = done.json()["audit"][0]
+    entry = env.client.get("/audit", params={"operation_id": id_, "action": "album.remove"}).json()["results"][0]
     assert (entry["action"], entry["operation_id"], entry["client"]) == ("album.remove", id_, "beets-ui")
     assert entry["changes"]["undo_of_import"] == id_ and len(entry["changes"]["trashed_to"]) == 2
     assert entry["changes"]["removed"]["album"]["album"] == "My Album"
@@ -407,7 +416,7 @@ def test_undo_removes_albums_items_and_copied_files_and_keeps_the_originals(env,
 
 def test_undoing_twice_is_refused(env, source):
     id_ = imported(env, source)
-    assert env.client.post(undo_url(id_)).status_code == 200
+    env.undo(id_)
     again = env.client.post(undo_url(id_))
     assert again.status_code == 409 and "already undone" in again.json()["detail"]
     assert env.client.get(undo_url(id_)).json()["allowed"] is False
@@ -479,8 +488,7 @@ def test_undo_is_refused_when_a_file_moved_since(env, source):
 
 def test_undo_a_singleton_import(env, source):
     id_ = imported_singletons(env, source)
-    done = env.client.post(undo_url(id_))
-    assert done.status_code == 200, done.text
+    env.undo(id_)
     assert len(env.lib.items()) == 0
 
 

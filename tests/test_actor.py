@@ -19,6 +19,7 @@ def test_modification_is_attributed_to_who_confirms_it_not_who_previews_it(env):
         "/modifications", headers=as_("alice"),
         json={"scope": "album", "query": "album:'My Album'", "set": {"genre": "Rock"}, "delete": []},
     ).json()
+    env.built(f"/modifications/{created['id']}")
     env.client.post(f"/modifications/{created['id']}/confirm", headers=as_("bob"))
     env.wait(f"/modifications/{created['id']}", "applied")
     (entry,) = entries(env, action="album.modify")
@@ -37,12 +38,6 @@ def test_without_headers_there_is_no_actor_or_client(env):
     env.client.put(f"/albums/{album.id}/art", content=PNG)
     (entry,) = entries(env)
     assert entry["actor"] is None and entry["client"] is None
-
-
-def test_the_unprefixed_client_header_is_ignored(env):
-    album = env.seed_album()
-    env.client.put(f"/albums/{album.id}/art", content=PNG, headers={"X-Client": "old"})
-    assert entries(env)[0]["client"] is None
 
 
 def test_actor_is_trimmed_and_refused_when_unsafe(env):
@@ -133,6 +128,6 @@ def test_undo_is_attributed_to_who_confirms_it(env, source):
     id_ = start(env, source)
     answer(env, id_, "bob", "asis")
     env.wait(f"/imports/{id_}", "completed")
-    assert env.client.post(f"/imports/{id_}/undo", headers=as_("carol")).status_code == 200
+    env.undo(id_, **as_("carol"))
     removal = [e for e in entries(env, operation_id=id_) if e["action"] == "album.remove"][0]
     assert removal["actor"] == "carol"

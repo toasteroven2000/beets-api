@@ -46,7 +46,7 @@ def test_rejected_modification_is_not_audited(env):
     op = env.preview(scope="album", query="", set={"albumdisambig": "x"})
     album.albumdisambig = "changed meanwhile"
     album.store()
-    assert env.client.post(f"/modifications/{op['id']}/confirm").status_code == 409
+    assert env.confirm(op["id"])["status"] == "rejected"
     assert audit(env)["total"] == 0
 
 

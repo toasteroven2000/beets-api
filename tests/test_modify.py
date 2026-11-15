@@ -154,10 +154,10 @@ def test_stale_preview_is_rejected_whole(env):
     item.genres = ["Changed"]
     item.store()
 
-    response = env.client.post(f"/modifications/{op['id']}/confirm")
+    env.confirm(op["id"])  # returns at once; the check happens when it is applied
 
-    assert response.status_code == 409
-    assert env.client.get(f"/modifications/{op['id']}").json()["status"] == "rejected"
+    done = env.client.get(f"/modifications/{op['id']}").json()
+    assert done["status"] == "rejected" and done["result"]["stale"]
     assert {i.comments for i in fresh_album(env, album).items()} == {""}
 
 

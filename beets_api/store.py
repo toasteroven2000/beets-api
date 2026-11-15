@@ -7,6 +7,7 @@ written as it happens. Triggers refuse any UPDATE or DELETE on it.
 
 import json
 import sqlite3
+import time
 from contextlib import closing
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
@@ -44,6 +45,27 @@ BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+class Progress:
+    """Saves an operation's result as it changes, at most once per interval.
+
+    The result holds the whole Preview, which can be megabytes, so saving it
+    after every record applied made a big operation take quadratic time.
+    `force` saves regardless, and is for status changes.
+    """
+
+    def __init__(self, store: "Store", id_: int, interval: float = 1.0):
+        self.store = store
+        self.id_ = id_
+        self.interval = interval
+        self.saved = float("-inf")  # so the first save is never skipped
+
+    def save(self, status: str, result: dict, force: bool = False) -> None:
+        now = time.monotonic()
+        if force or now - self.saved >= self.interval:
+            self.store.update(self.id_, status, result)
+            self.saved = now
 
 
 def _decode(row: sqlite3.Row) -> dict:

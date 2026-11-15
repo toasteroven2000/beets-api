@@ -25,6 +25,8 @@ Send `X-Beets-API-Client` (the program) and `X-Beets-API-Actor` (the person it a
 
 Album art is only served, written or moved inside the music `directory` from beets' config. Nothing the API does deletes a file: removals, Import undo, a duplicate replaced by an Import, and replaced or removed art all move the files into the **Trash**, and each audit entry lists where they went (`trashed_to`). Only a Purge deletes from the Trash. The Trash is a directory you set with `BEETS_API_TRASH_DIR`; while it is unset a warning is logged at startup and anything that would delete a file is refused with `409`. Each operation gets a folder named by its id, keeping each file's path relative to the music directory; art changed on its own goes in an `art-album-…` folder. If the Trash is on another filesystem, a file is copied, checked, and only then removed from the library.
 
+Nothing that can take long runs inside a request. Previews, Confirms, Purges and undoing an Import answer `202` at once and do the work in the background, so poll the operation's `GET` for its `status`. A Preview is `previewing` until it is built, then `awaiting_confirmation` (or `no_changes`, or `failed` with `result.error`); a Confirm goes `queued`, `applying`, then `applied`, `partial` or `rejected`. A malformed query or field list is still refused with `4xx` straight away. Page sizes (`limit`) are capped at 1000, and `GET /import-paths` pages a directory's entries with `limit` and `offset`. Operations still `previewing`, `queued` or `applying` when the server stops become `interrupted`.
+
 Interactive API docs are served at `/docs`.
 
 ## Environment variables
@@ -40,7 +42,7 @@ Interactive API docs are served at `/docs`.
 
 | Method | Path | What it does |
 |---|---|---|
-| `GET` | `/list?scope=item\|album&query=…` | Items or Albums matching a beets query, paged |
+| `GET` | `/list?scope=item\|album&query=…` | Items or Albums matching a beets query, paged (`limit` is at most 1000) |
 | `GET` | `/items/{id}`, `/albums/{id}` | One Item or Album |
 | `GET` | `/albums/{id}/art` | The Album's cover image |
 | `PUT` | `/albums/{id}/art` | Upload a JPEG or PNG as `cover.jpg`/`cover.png` (never embedded) |
@@ -48,22 +50,22 @@ Interactive API docs are served at `/docs`.
 | `GET` | `/audit?target=album:5&action=…&actor=…` | Every change made to the Library, newest first |
 | `GET` | `/audit/{id}` | One Audit entry; `404` if there is none |
 | `GET` | `/config` | beets config, with secrets redacted |
-| `POST` | `/modifications` | Preview a `beet modify` |
+| `POST` | `/modifications` | Start a `beet modify` Preview: `202` at once, then poll until it is no longer `previewing` |
 | `GET` | `/modifications`, `/modifications/{id}` | Modification history, newest first |
-| `POST` | `/modifications/{id}/confirm` | Apply a Preview |
-| `POST` | `/removals` | Preview removing the Items or Albums a query matches, and moving their files to the Trash. A query is required |
+| `POST` | `/modifications/{id}/confirm` | Apply a Preview: `202` at once, then poll. If the Library changed since the Preview, the Modification becomes `rejected` |
+| `POST` | `/removals` | Start a Preview of removing the Items or Albums a query matches, and moving their files to the Trash. A query is required |
 | `GET` | `/removals`, `/removals/{id}` | Removal history, newest first |
 | `POST` | `/removals/{id}/confirm` | Remove what a Preview lists. Files inside the music directory go to the Trash; any outside it are left in place and listed in the audit entry |
 | `GET` | `/trash` | The Trash: a folder per operation, with its file count, size, age, and the actions and Actors the audit knows for it |
-| `POST` | `/purges` | Preview deleting Trash folders for good: `folders` (names from `/trash`) and/or `older_than`; with neither, every folder |
+| `POST` | `/purges` | Start a Preview of deleting Trash folders for good: `folders` (names from `/trash`) and/or `older_than`; with neither, every folder |
 | `GET` | `/purges`, `/purges/{id}` | Purge history, newest first |
-| `POST` | `/purges/{id}/confirm` | Delete what a Preview lists. Cannot be undone; refused with `409` if the Trash changed since the Preview |
+| `POST` | `/purges/{id}/confirm` | Delete what a Preview lists. Cannot be undone; becomes `rejected` if the Trash changed since the Preview |
 | `POST` | `/imports` | Start an import from server paths |
 | `GET` | `/imports`, `/imports/{id}` | Import history, newest first; one Import's progress and current prompt. `result.expected_tasks` is how many Import Tasks beets will ask about, counted when the Import starts (one per folder of music, or per file when importing singletons, leaving out what a resumed Import skips), and `result.tasks_done` how many it has finished, skipped ones included. The total is an estimate: choosing "Import as tracks" or "Group albums" for a folder adds Tasks, and it is `null` if counting failed |
 | `GET` | `/imports/{id}/tasks?state=…` | The Import Tasks an active Import expects, in the order beets will ask, each `done`, `current` or `pending` (filter with repeatable `state`; paged with `limit` and `offset`). Empty once the Import ends, or if the Tasks could not be counted |
 | `POST` | `/imports/{id}/choice` | Answer an import prompt |
 | `GET` | `/imports/{id}/undo` | Preview undoing an Import: the Albums, Items and files it would remove, and `reasons` if it may not be undone. Changes nothing |
-| `POST` | `/imports/{id}/undo` | Remove what an Import added and move the files it copied in to the Trash; `409` with the reasons when unsafe. Only a plain `copy` Import can be undone, and not once anything it made has been changed, or if it replaced existing records |
+| `POST` | `/imports/{id}/undo` | Remove what an Import added and move the files it copied in to the Trash; `409` with the reasons when unsafe, otherwise `202` and it runs in the background: poll the Import, whose `undoing` is true until it finishes, then `result.undone` is set (or `result.undo_error`). Only a plain `copy` Import can be undone, and not once anything it made has been changed, or if it replaced existing records |
 | `DELETE` | `/imports/{id}` | Abort an import |
 
 Terms such as Item, Album, Modification and Preview are defined in [CONTEXT.md](CONTEXT.md). Design decisions are in [docs/adr](docs/adr).

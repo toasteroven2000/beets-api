@@ -29,7 +29,7 @@ def _summary(op: dict) -> dict:
     """A Purge without its Preview."""
     result = op["result"]
     counts = {
-        "folders": len(result["preview"]["folders"]),
+        "folders": len(result.get("preview", {"folders": []})["folders"]),
         "purged": len(result.get("purged", [])),
         "failed": len(result.get("failed", [])),
     }
@@ -57,17 +57,29 @@ class Purges:
         return {"configured": self.trash.configured, "folders": folders}
 
     def create(self, request: dict) -> dict:
-        folders = self.trash.folders()
+        """Start building the Preview in the background; poll until it is no longer `previewing`."""
         if (names := request["folders"]) is not None:
-            if unknown := sorted(set(names) - {f["name"] for f in folders}):
+            if unknown := sorted(set(names) - set(self.trash.names())):
                 raise HTTPException(422, f"not Trash folders: {unknown}")
-            folders = [f for f in folders if f["name"] in names]
-        if request["older_than"] is not None:
-            before = _time(request["older_than"])
-            folders = [f for f in folders if _time(f["modified"]) < before]
+        result = {"trash_configured": self.trash.configured}
+        id_ = self.store.create(KIND, "previewing", request, result)
+        self.executor.submit(self._preview, id_, request, result)
+        return self.get(id_)
+
+    def _preview(self, id_: int, request: dict, result: dict) -> None:
+        try:
+            folders = self.trash.folders()  # walks every file, so it is not done in the request
+            if (names := request["folders"]) is not None:
+                folders = [f for f in folders if f["name"] in names]
+            if request["older_than"] is not None:
+                before = _time(request["older_than"])
+                folders = [f for f in folders if _time(f["modified"]) < before]
+        except Exception as exc:
+            log.exception("preview of purge %s failed", id_)
+            self.store.update(id_, "failed", result | {"error": str(exc)})
+            return
         status = "awaiting_confirmation" if folders else "no_changes"
-        result = {"preview": {"folders": folders}, "trash_configured": self.trash.configured}
-        return self.get(self.store.create(KIND, status, request, result))
+        self.store.update(id_, status, result | {"preview": {"folders": folders}})
 
     def get(self, id_: int) -> dict:
         op = self.store.get(id_, KIND)
@@ -89,9 +101,7 @@ class Purges:
         if op["status"] != "awaiting_confirmation":
             raise HTTPException(409, f"cannot confirm while {op['status']}")
         self.trash.require()
-        if stale := self._stale(op["result"]["preview"]):
-            self.store.update(id_, "rejected", op["result"] | {"stale": stale})
-            raise HTTPException(409, {"detail": "the Trash changed since Preview", "stale": stale})
+        # Whether the Trash changed since the Preview is checked when it is applied.
         if not self.store.transition(id_, "awaiting_confirmation", "queued"):
             raise HTTPException(409, "already confirmed")
         self.executor.submit(self._apply, id_, caller)
