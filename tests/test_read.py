@@ -46,10 +46,6 @@ def test_get_item_and_album(env):
     assert env.client.get("/albums/999").status_code == 404
 
 
-def test_rejects_other_hosts(env):
-    assert env.client.get("/list?scope=item", headers={"Host": "evil.example"}).status_code == 400
-
-
 def test_rejects_non_json_bodies(env):
     response = env.client.post(
         "/modifications",
@@ -146,3 +142,4 @@ def test_a_page_cannot_be_asked_to_be_huge(env):
                          ("/removals", {}), ("/purges", {}), ("/imports", {})):
         assert env.client.get(path, params=params | {"limit": 1001}).status_code == 422, path
         assert env.client.get(path, params=params | {"limit": 1000}).status_code == 200, path
+

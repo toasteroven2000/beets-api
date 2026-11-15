@@ -6,7 +6,7 @@ A small HTTP API for reading and changing a [beets](https://beets.io) music libr
 > **This project is alpha.** Expect breaking changes to endpoints, responses and the history database at any time, with no notice and no migrations.
 
 > [!CAUTION]
-> **This project is AI coded and comes with no security guarantees.** Most of the code was written by an AI assistant and has not had a security review. The API has no authentication: anything that can reach it can read your library, change metadata, move files and import music. Only run it on `127.0.0.1` on a machine you trust, and back up your library before pointing it at one you care about.
+> **This project is AI coded and comes with no security guarantees.** Most of the code was written by an AI assistant and has not had a security review. The API has no authentication: anything that can reach it can read your library, change metadata, move files and import music. It accepts any `Host` header, so nothing but the network stops a website from reaching it. Only run it on `127.0.0.1` on a machine you trust, or on an internal-only address, and back up your library before pointing it at one you care about.
 
 ## Running
 

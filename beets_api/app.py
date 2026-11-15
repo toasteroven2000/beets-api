@@ -15,7 +15,6 @@ from beets.dbcore.query import ParsingError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, responses
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
-from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .caller import Caller, caller
 from .import_paths import browse, import_roots
@@ -115,8 +114,6 @@ def create_app() -> FastAPI:
     app = FastAPI(title="beets-api", default_response_class=JSONResponse)
     app.state.lib = lib
     app.state.store = store
-    # No auth: this stops websites reaching the API through DNS rebinding.
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
     app.add_middleware(MusicDirMiddleware, lib=lib)
 
     @app.exception_handler(ParsingError)
