@@ -48,7 +48,9 @@ A Helm chart is in [charts/beets-api](charts/beets-api): `helm install beets-api
 |---|---|---|
 | `GET` | `/list?scope=item\|album&query=…` | Items or Albums matching a beets query, paged (`limit` is at most 1000) |
 | `GET` | `/items/{id}`, `/albums/{id}` | One Item or Album |
+| `GET` | `/items/{id}/audio` | The Item's file, for playing (answers Range requests); only from inside the music directory |
 | `GET` | `/albums/{id}/art` | The Album's cover image |
+| `GET` | `/import-paths/audio?path=…` | A file under an Import Path, for playing before it is imported (audio files only) |
 | `PUT` | `/albums/{id}/art` | Upload a JPEG or PNG as `cover.jpg`/`cover.png` (never embedded) |
 | `DELETE` | `/albums/{id}/art` | Remove the Album's art |
 | `GET` | `/audit?target=album:5&action=…&actor=…` | Every change made to the Library, newest first |

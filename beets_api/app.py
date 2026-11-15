@@ -20,10 +20,12 @@ from .caller import Caller, caller
 from .import_paths import browse, import_roots
 from .imports import Imports
 from .art import AlbumArt
+from .audio import audio_response
 from .library import default_store_path, open_library, to_json
 from .modify import Modifications
 from .purges import Purges
 from .removals import Removals
+from .roots import Roots
 from .store import Store
 from .trash import Trash
 
@@ -147,6 +149,13 @@ def create_app() -> FastAPI:
             raise HTTPException(404, "item not found")
         return to_json(item)
 
+    @app.get("/items/{id_}/audio", response_class=responses.FileResponse)
+    def get_item_audio(id_: int):
+        """The Item's file, for playing; only from inside the music directory."""
+        if (item := lib.get_item(id_)) is None:
+            raise HTTPException(404, "item not found")
+        return audio_response(item.path, Roots([lib.directory]), "the item's file is outside the music directory")
+
     @app.get("/albums/{id_}")
     def get_album(id_: int):
         if (album := lib.get_album(id_)) is None:
@@ -269,6 +278,13 @@ def create_app() -> FastAPI:
     ):
         """Without a path, the Import Paths; with one, a page of that directory's children."""
         return browse(roots, path, limit, offset)
+
+    @app.get("/import-paths/audio", response_class=responses.FileResponse)
+    def get_import_path_audio(path: str):
+        """A file under an Import Path, for playing before it is imported."""
+        if not os.path.isabs(path):
+            raise HTTPException(400, "path must be absolute")
+        return audio_response(os.path.normpath(path), roots, "path is outside BEETS_API_IMPORT_PATHS")
 
     @app.post("/imports", status_code=202)
     def create_import(body: ImportRequest, who: Annotated[Caller, Depends(caller)]):
