@@ -145,13 +145,18 @@ def tag_mp3(path: Path, release: dict, track: dict) -> None:
     tags.save()
 
 
+def safe_filename(name: str) -> str:
+    """Replace path separators (and NUL) so names like "Needing/Getting" stay one component."""
+    return name.replace("/", "-").replace("\0", "")
+
+
 def generate_release_files(release: dict, staging_dir: Path) -> list[Path]:
-    album_dir = staging_dir / f"{release['artist']} - {release['album']}"
+    album_dir = staging_dir / safe_filename(f"{release['artist']} - {release['album']}")
     album_dir.mkdir(parents=True, exist_ok=True)
 
     paths = []
     for track in release["tracks"]:
-        filename = f"{track['position']:02d} - {track['title']}.mp3"
+        filename = safe_filename(f"{track['position']:02d} - {track['title']}.mp3")
         path = album_dir / filename
         make_silent_mp3(path)
         tag_mp3(path, release, track)
