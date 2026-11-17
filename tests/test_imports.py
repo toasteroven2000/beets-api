@@ -257,6 +257,92 @@ def test_waiting_import_is_interrupted_after_restart_and_reimport_skips_finished
     assert len(env.lib.items()) == 4
 
 
+def finish_album_a_then_restart(env, incoming):
+    """An Import of Album A and B, interrupted once A is in: beets' progress has A."""
+    make_album_files(str(incoming / "a"), album="Album A")
+    make_album_files(str(incoming / "b"), album="Album B")
+    id_ = start(env, str(incoming))
+    choose(env, id_, "asis")
+    env.wait(f"/imports/{id_}", "waiting_for_choice")
+    end = time.monotonic() + 10
+    music = env.tmp_path / "home" / "Music" / "Artist" / "Album A"
+    while time.monotonic() < end and not (music.exists() and len(list(music.iterdir())) == 2):
+        time.sleep(0.02)
+    time.sleep(0.3)
+    restart(env)
+
+
+def test_import_without_resume_considers_finished_folders_again_and_keeps_progress(env):
+    incoming = env.tmp_path / "incoming"
+    finish_album_a_then_restart(env, incoming)
+
+    again = start(env, str(incoming), resume=False)
+    assert env.client.get(f"/imports/{again}").json()["request"]["resume"] is False
+    current = prompt(env, again)
+    assert current["current"]["album"] == "Album A"
+    assert progress(env, again)[0] == 2
+    choose(env, again, "asis")
+    # Album A is in the Library already: beets asks, nothing is replaced unasked.
+    duplicate = prompt(env, again)
+    assert duplicate["kind"] == "duplicate"
+    assert [e["album"] for e in duplicate["existing"]] == ["Album A"]
+    choose(env, again, "skip")
+    choose(env, again, "skip")  # Album B
+    assert finish(env, again)["status"] == "completed"
+    assert len(env.lib.items()) == 2
+
+    # The earlier Import's progress is as it was: a normal Import still skips A.
+    normal = start(env, str(incoming))
+    assert prompt(env, normal)["current"]["album"] == "Album B"
+    assert progress(env, normal)[0] == 1
+    env.client.delete(f"/imports/{normal}")
+
+
+def test_import_without_resume_ignores_incremental_history(env, source):
+    from beets import config
+    config["import"]["incremental"] = True
+    try:
+        first = start(env, source)
+        choose(env, first, "asis")
+        assert finish(env, first)["status"] == "completed"
+
+        normal = start(env, source)
+        done = finish(env, normal)
+        assert done["result"]["expected_tasks"] == 0 and done["result"]["choices"] == []
+
+        again = start(env, source, resume=False)
+        assert prompt(env, again)["kind"] == "album"
+        env.client.delete(f"/imports/{again}")
+    finally:
+        config["import"]["incremental"] = False
+
+
+@pytest.mark.parametrize("singletons", [False, True])
+def test_a_skipped_song_can_be_imported_again_despite_incremental_history(env, singletons):
+    """Skipping the only song of an Import leaves nothing to undo, and with
+    incremental on beets remembers the skip: a normal Import passes over it."""
+    from beets import config
+    folder = env.tmp_path / "incoming" / "song"
+    make_album_files(str(folder), titles=("One",))
+    source = str(env.tmp_path / "incoming")
+    config["import"]["incremental"] = True
+    try:
+        first = start(env, source, singletons=singletons)
+        choose(env, first, "skip")
+        assert finish(env, first)["status"] == "completed"
+
+        normal = finish(env, start(env, source, singletons=singletons))
+        assert normal["result"]["expected_tasks"] == 0 and normal["result"]["choices"] == []
+
+        again = start(env, source, singletons=singletons, resume=False)
+        assert prompt(env, again)["kind"] == ("item" if singletons else "album")
+        choose(env, again, "asis")
+        assert finish(env, again)["status"] == "completed"
+        assert [i.title for i in env.lib.items()] == ["One"]
+    finally:
+        config["import"]["incremental"] = False
+
+
 def restart_with_import_paths(env, monkeypatch, value):
     monkeypatch.setenv("BEETS_API_IMPORT_PATHS", value)
     restart(env)

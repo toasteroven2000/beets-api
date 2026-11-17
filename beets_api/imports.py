@@ -133,7 +133,7 @@ def plan_tasks(session) -> list[tuple[str, ...]]:
 class ApiImportSession(ImportSession):
     def __init__(
         self, lib, paths: list[str], op_id: int, store: Store, trash: Trash,
-        caller: Caller = Caller(), mode: str | None = None,
+        caller: Caller = Caller(), mode: str | None = None, resume: bool = True,
     ):
         super().__init__(lib, None, [os.fsencode(p) for p in paths], None)
         self.op_id = op_id
@@ -145,6 +145,7 @@ class ApiImportSession(ImportSession):
         # attributed to the person who made it, not only to whoever started the Import.
         self.actors: dict[int, str | None] = {}
         self.mode = mode
+        self.resume = resume
         self.expected: int | None = None  # Tasks beets will ask about, counted at the start
         self.plan: list[tuple[str, ...]] = []  # those Tasks, in the order beets will ask
         self.finished: set[tuple[str, ...]] = set()  # the paths of the Tasks beets has finished
@@ -155,6 +156,10 @@ class ApiImportSession(ImportSession):
         self.abort_requested = False
         self.history: list[dict] = []
         self.tasks: list = []
+
+    def already_imported(self, toppath, paths) -> bool:
+        # beets' incremental history would skip a folder even with resume off.
+        return self.resume and super().already_imported(toppath, paths)
 
     def _save(self, status: str, **extra) -> None:
         result = {
@@ -407,7 +412,11 @@ class Imports:
             # Beets' import config is global, which is why one Import runs at a time.
             settings = config["import"]
             settings["autotag"] = True  # Without autotag there are no prompts.
-            settings["resume"] = True  # Finished Import Tasks are skipped if re-imported.
+            # Finished Import Tasks are skipped if re-imported, unless this Import
+            # is to consider them again. Without resume, beets neither reads nor
+            # changes earlier progress.
+            resume = request.get("resume", True)
+            settings["resume"] = resume
             settings["quiet"] = False
             settings["pretend"] = False
             settings["singletons"] = request["singletons"]
@@ -416,7 +425,7 @@ class Imports:
             mode = import_mode(settings)
             result = {"prompt": None, "choices": [], "mode": mode, "expected_tasks": None, "tasks_done": 0}
             id_ = self.store.create(KIND, "running", request, result)
-            session = ApiImportSession(self.lib, paths, id_, self.store, self.trash, caller, mode)
+            session = ApiImportSession(self.lib, paths, id_, self.store, self.trash, caller, mode, resume)
             self.sessions[id_] = session
             self.active = session
         threading.Thread(target=self._run, args=(session,), daemon=True).start()

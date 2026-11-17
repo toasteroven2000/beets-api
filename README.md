@@ -66,7 +66,7 @@ A Helm chart is in [charts/beets-api](charts/beets-api): `helm install beets-api
 | `POST` | `/purges` | Start a Preview of deleting Trash folders for good: `folders` (names from `/trash`) and/or `older_than`; with neither, every folder |
 | `GET` | `/purges`, `/purges/{id}` | Purge history, newest first |
 | `POST` | `/purges/{id}/confirm` | Delete what a Preview lists. Cannot be undone; becomes `rejected` if the Trash changed since the Preview |
-| `POST` | `/imports` | Start an import from server paths |
+| `POST` | `/imports` | Start an import from server paths: `paths`, `singletons`, and `resume` (default `true`). With `resume: false` the Import considers again the folders that earlier Imports finished or skipped, ignoring beets' resume progress and incremental history for this run only; that progress is left as it was, and duplicates still get the duplicate prompt |
 | `GET` | `/imports`, `/imports/{id}` | Import history, newest first; one Import's progress and current prompt. `result.expected_tasks` is how many Import Tasks beets will ask about, counted when the Import starts (one per folder of music, or per file when importing singletons, leaving out what a resumed Import skips), and `result.tasks_done` how many it has finished, skipped ones included. The total is an estimate: choosing "Import as tracks" or "Group albums" for a folder adds Tasks, and it is `null` if counting failed |
 | `GET` | `/imports/{id}/tasks?state=…` | The Import Tasks an active Import expects, in the order beets will ask, each `done`, `current` or `pending` (filter with repeatable `state`; paged with `limit` and `offset`). Empty once the Import ends, or if the Tasks could not be counted |
 | `POST` | `/imports/{id}/choice` | Answer an import prompt |

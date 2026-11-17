@@ -66,6 +66,8 @@ class PurgeRequest(BaseModel):
 class ImportRequest(BaseModel):
     paths: list[str]
     singletons: bool = False
+    # False imports again what earlier Imports finished or skipped.
+    resume: bool = True
 
 
 class ChoiceRequest(BaseModel):
