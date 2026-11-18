@@ -31,6 +31,16 @@ def image_extension(data: bytes) -> str | None:
     return next((ext for sig, ext in IMAGE_SIGNATURES.items() if data.startswith(sig)), None)
 
 
+def audio_mode(album) -> int:
+    """The permissions of the Album's audio files, without execute bits."""
+    for item in album.items():
+        try:
+            return os.stat(item.path).st_mode & 0o666
+        except OSError:
+            continue
+    return 0o644
+
+
 class AlbumArt:
     def __init__(self, lib, store: Store, trash: Trash):
         self.lib = lib
@@ -75,6 +85,9 @@ class AlbumArt:
             dest = os.path.join(directory, b"cover" + extension.encode())
             with tempfile.NamedTemporaryFile(dir=directory, delete=False) as f:
                 f.write(data)
+                # The temporary file is created owner-only; without this the
+                # cover would be unreadable to anyone the audio files are shared with.
+                os.fchmod(f.fileno(), audio_mode(album))
             # A file already at dest may not be the recorded art; keep it too.
             try:
                 trashed, left = self.trash.put_all(art_folder(album_id), (old, dest))

@@ -81,6 +81,25 @@ def test_upload_rejects_bad_requests_without_recording_them(env, monkeypatch):
     assert audit(env)["total"] == 0
 
 
+def mode(path):
+    return os.stat(path).st_mode & 0o777
+
+
+def test_upload_is_as_readable_as_the_albums_audio_files(env):
+    album = env.seed_album()
+    for item in album.items():
+        os.chmod(item.path, 0o644)
+    assert mode(new_artpath(upload(env, album, JPEG))) == 0o644
+    assert mode(new_artpath(upload(env, album, PNG))) == 0o644
+
+
+def test_upload_follows_the_audio_files_mode_without_making_it_executable(env):
+    album = env.seed_album()
+    for item in album.items():
+        os.chmod(item.path, 0o750)
+    assert mode(new_artpath(upload(env, album, JPEG))) == 0o640
+
+
 def test_upload_does_not_embed_it(env, monkeypatch):
     sent = []
     monkeypatch.setattr("beets.plugins.send", lambda event, **kw: sent.append(event) or [])
